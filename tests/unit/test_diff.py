@@ -64,12 +64,39 @@ index 3..4 100644
     assert hb.changed_new_lines == {13}
 
 def test_changed_new_ranges_union():
+    diff = """diff --git a/a.go b/a.go
+index 1..2 100644
+--- a/a.go
++++ b/a.go
+@@ -1 +1,2 @@
+ package main
++// first
+@@ -5 +7,2 @@
+ func old() {
++	return 1
+ """
     changes = [StagedChange(path="a.go", status="modified")]
-    attach_hunks(changes, parse_unified_diff(DIFF))
-    assert changed_new_ranges(changes[0]) == {3}
+    attach_hunks(changes, parse_unified_diff(diff))
+    assert [h.changed_new_lines for h in changes[0].hunks] == [{2}, {8}]
+    assert changed_new_ranges(changes[0]) == {2, 8}
+
+def test_added_and_removed_lines_starting_with_plus_minus():
+    diff = """diff --git a/a.go b/a.go
+index 1..2 100644
+--- a/a.go
++++ b/a.go
+@@ -1,2 +1,2 @@
++++x
+---y
+ """
+    parsed = parse_unified_diff(diff)
+    h = parsed["a.go"][0]
+    assert h.added_lines == ["++x"]
+    assert h.removed_lines == ["--y"]
 
 def test_empty_and_header_only_input():
     assert parse_unified_diff("") == {}
     parsed = parse_unified_diff(DIFF.split("@@")[0])
     assert set(parsed.keys()) == {"a.go"}
     assert parsed["a.go"] == []
+

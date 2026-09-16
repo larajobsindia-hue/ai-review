@@ -44,11 +44,11 @@ def parse_unified_diff(text: str) -> dict[str, list[Hunk]]:
         if hunk is None:
             continue
         body = line[1:]
-        if line.startswith("+") and not line.startswith("+++"):
+        if line.startswith("+"):
             hunk.added_lines.append(body)
             hunk.changed_new_lines.add(new_line)
             new_line += 1
-        elif line.startswith("-") and not line.startswith("---"):
+        elif line.startswith("-"):
             hunk.removed_lines.append(body)
         elif line.startswith(" "):
             new_line += 1
