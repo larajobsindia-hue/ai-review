@@ -106,12 +106,10 @@ def _detected_frameworks(repo_dir: str) -> list[ProfileEntry]:
     return out
 
 
-def _detected_databases(repo_dir: str, ext_counts: dict[str, int]) -> list[ProfileEntry]:
+def _detected_databases(repo_dir: str) -> list[ProfileEntry]:
     out: list[ProfileEntry] = []
     for db, needles in DATABASE_RULES:
         hits: list[str] = []
-        if ext_counts.get(".sql"):
-            hits.append("sql migration files present")
         for mf in ("docker-compose.yml", "docker-compose.yaml", "values.yaml"):
             text = _manifest_text(repo_dir, mf)
             if not text:
@@ -153,6 +151,6 @@ def detect(change_paths: list[str], repo_dir: str) -> RepoProfile:
     return RepoProfile(
         languages=_detected_languages(repo_dir, ext_counts),
         frameworks=_detected_frameworks(repo_dir),
-        databases=_detected_databases(repo_dir, ext_counts),
+        databases=_detected_databases(repo_dir),
         infrastructure=_detected_infrastructure(repo_dir, change_paths),
     )
