@@ -27,6 +27,14 @@ def test_redact_aws_secret_access_key_value():
     assert kinds == ["aws"]
 
 
+def test_redact_aws_secret_access_key_spaced_value():
+    text = f'aws_secret_access_key = "{AWS_SECRET}"'
+    redacted, kinds = redact_text(text)
+    assert AWS_SECRET not in redacted
+    assert "[REDACTED:aws:" in redacted
+    assert "aws" in kinds
+
+
 def test_redact_dedupes_kinds_across_patterns():
     text = f"{AWS_ACCESS_KEY}\naws_secret_access_key={AWS_SECRET}\n"
     redacted, kinds = redact_text(text)
@@ -91,17 +99,32 @@ def test_redact_custom_patterns():
     assert kinds == ["custom"]
 
 
-def test_redact_empty_patterns_falls_back_to_defaults():
-    redacted, kinds = redact_text(f"key={AWS_ACCESS_KEY}", patterns=[])
-    assert AWS_ACCESS_KEY not in redacted
-    assert kinds == ["aws"]
+def test_redact_empty_patterns_means_no_redaction():
+    text = f"key={AWS_ACCESS_KEY}"
+    redacted, kinds = redact_text(text, patterns=[])
+    assert redacted == text
+    assert kinds == []
 
 
 def test_redact_placeholders_survive_a_second_pass():
-    redacted, _ = redact_text(f"aws_access_key_id={AWS_ACCESS_KEY}")
-    again, kinds = redact_text(redacted)
-    assert again == redacted
-    assert kinds == []
+    text = f"aws_access_key_id={AWS_ACCESS_KEY}\npassword = hunter22"
+    once, kinds = redact_text(text)
+    assert "aws" in kinds
+    assert "password" in kinds
+    assert "[REDACTED:password:" in once
+    twice, kinds2 = redact_text(once)
+    assert twice == once
+    assert kinds2 == []
+
+
+def test_redact_password_placeholder_never_recaptured_by_other_kinds():
+    text = "secret = hunter22"
+    once, kinds = redact_text(text)
+    assert "password" in kinds
+    assert "[REDACTED:password:" in once
+    twice, kinds2 = redact_text(once)
+    assert twice == once
+    assert kinds2 == []
 
 
 def test_redact_output_uses_deterministic_sha_placeholders():
@@ -110,7 +133,7 @@ def test_redact_output_uses_deterministic_sha_placeholders():
     two, _ = redact_text(text)
     assert one == two
     assert re.search(r"\[REDACTED:aws:[0-9a-f]{10}\]$", one)
-    assert "AKIAIOSFODNN7EXAMPLE" not in one
+    assert AWS_ACCESS_KEY not in one
 
 
 def test_secret_patterns_exported():
@@ -150,6 +173,18 @@ def test_scan_staged_finds_hardcoded_key(tmp_path):
     assert findings[0].hard_block is True
     assert findings[0].file == "app.py"
     assert findings[0].line == 1
+    assert findings[0].evidence.startswith("[REDACTED:")
+    assert GITHUB_TOKEN not in findings[0].evidence
+
+
+def test_scan_staged_finds_hardcoded_key_in_renamed(tmp_path):
+    (tmp_path / "new.py").write_text(f"key={GITHUB_TOKEN}\n")
+    change = StagedChange(path="new.py", status="renamed", old_path="old.py")
+    findings = scan_staged(str(tmp_path), [change])
+    assert findings
+    assert findings[0].file == "new.py"
+    assert findings[0].severity == "CRITICAL"
+    assert findings[0].hard_block is True
 
 
 def test_scan_staged_line_number(tmp_path):
@@ -158,7 +193,8 @@ def test_scan_staged_line_number(tmp_path):
     findings = scan_staged(str(tmp_path), [change])
     assert findings
     assert findings[0].line == 2
-    assert findings[0].evidence == AWS_ACCESS_KEY
+    assert findings[0].evidence.startswith("[REDACTED:")
+    assert AWS_ACCESS_KEY not in findings[0].evidence
 
 
 def test_scan_staged_skips_deleted(tmp_path):
@@ -167,16 +203,17 @@ def test_scan_staged_skips_deleted(tmp_path):
     assert scan_staged(str(tmp_path), [change]) == []
 
 
-def test_scan_staged_skips_renamed(tmp_path):
-    (tmp_path / "moved.py").write_text(f"key={GITHUB_TOKEN}\n")
-    change = StagedChange(path="moved.py", status="renamed", old_path="old.py")
-    assert scan_staged(str(tmp_path), [change]) == []
-
-
 def test_scan_staged_skips_excluded_default(tmp_path):
     (tmp_path / ".env").write_text(f"TOKEN={GITHUB_TOKEN}\n")
     change = StagedChange(path=".env", status="added")
     assert scan_staged(str(tmp_path), [change]) == []
+
+
+def test_scan_staged_empty_excluded_scans_everything(tmp_path):
+    (tmp_path / ".env").write_text(f"TOKEN={GITHUB_TOKEN}\n")
+    change = StagedChange(path=".env", status="added")
+    findings = scan_staged(str(tmp_path), [change], excluded=[])
+    assert any(f.file == ".env" for f in findings)
 
 
 def test_scan_staged_skips_excluded_custom(tmp_path):
@@ -204,3 +241,4 @@ def test_scan_staged_multiple_changes(tmp_path):
     findings = scan_staged(str(tmp_path), [a, b])
     assert len(findings) >= 1
     assert all(f.file == "a.py" for f in findings)
+    assert all(f.evidence.startswith("[REDACTED:") for f in findings)
