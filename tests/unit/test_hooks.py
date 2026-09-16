@@ -17,6 +17,7 @@ from ai_review.hooks import (
 )
 
 BASH = shutil.which("bash")
+SH = shutil.which("sh")
 
 
 def _git(root, *args):
@@ -123,18 +124,22 @@ def test_installed_hook_is_executable(repo):
     assert stat.S_IMODE(hook.stat().st_mode) == 0o755
 
 
-@pytest.mark.skipif(BASH is None, reason="bash not available")
-def test_wrapper_bash_syntax_with_backup():
-    text = _render_wrapper("ai-review", has_backup=True)
-    script = _write_and_chmod(text)
-    assert subprocess.run([BASH, "-n", str(script)]).returncode == 0
+@pytest.mark.skipif(SH is None, reason="sh not available")
+@pytest.mark.parametrize("has_backup", [True, False])
+def test_wrapper_sh_syntax(has_backup):
+    script = _write_and_chmod(_render_wrapper("ai-review", has_backup=has_backup))
+    assert subprocess.run([SH, "-n", str(script)]).returncode == 0
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not available")
-def test_wrapper_bash_syntax_without_backup():
-    text = _render_wrapper("ai-review", has_backup=False)
-    script = _write_and_chmod(text)
+@pytest.mark.parametrize("has_backup", [True, False])
+def test_wrapper_bash_syntax(has_backup):
+    script = _write_and_chmod(_render_wrapper("ai-review", has_backup=has_backup))
     assert subprocess.run([BASH, "-n", str(script)]).returncode == 0
+
+
+def test_wrapper_shebang_is_posix_sh():
+    assert _render_wrapper("ai-review", has_backup=False).startswith("#!/bin/sh\n")
 
 
 def test_wrapper_honors_ai_review_exe_env_override():
@@ -143,7 +148,7 @@ def test_wrapper_honors_ai_review_exe_env_override():
     assert 'command -v "$_EXE"' in text
 
 
-@pytest.mark.skipif(BASH is None, reason="bash not available")
+@pytest.mark.skipif(SH is None, reason="sh not available")
 def test_wrapper_runs_backup_then_ours(tmp_path):
     hook_dir = tmp_path / "hooks"
     hook_dir.mkdir()
@@ -153,12 +158,12 @@ def test_wrapper_runs_backup_then_ours(tmp_path):
     text = _render_wrapper("ai-review", has_backup=True)
     script = _write_and_chmod(text, hook_dir / "pre-commit")
     env = dict(os.environ, AI_REVIEW_EXE="/bin/true")
-    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True, env=env)
+    proc = subprocess.run([SH, str(script)], capture_output=True, text=True, env=env)
     assert proc.returncode == 0
     assert "existing-ran" in proc.stdout
 
 
-@pytest.mark.skipif(BASH is None, reason="bash not available")
+@pytest.mark.skipif(SH is None, reason="sh not available")
 def test_wrapper_propagates_failure_exit_code(tmp_path):
     hook_dir = tmp_path / "hooks"
     hook_dir.mkdir()
@@ -168,8 +173,21 @@ def test_wrapper_propagates_failure_exit_code(tmp_path):
     failing.write_text("#!/bin/sh\nexit 3\n")
     failing.chmod(0o755)
     env = dict(os.environ, AI_REVIEW_EXE=str(failing))
-    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True, env=env)
+    proc = subprocess.run([SH, str(script)], capture_output=True, text=True, env=env)
     assert proc.returncode == 3
+
+
+@pytest.mark.skipif(SH is None, reason="sh not available")
+def test_wrapper_fails_open_when_exe_missing(tmp_path):
+    # Deliberate semantic: with the ai-review executable absent, the hook
+    # FAILS OPEN (exit 0) after warning on stderr — a missing install must
+    # never block every commit in the repo.
+    script = _write_and_chmod(_render_wrapper("ai-review", has_backup=False))
+    env = dict(os.environ, AI_REVIEW_EXE="nonexistent-xyz-abc")
+    proc = subprocess.run([SH, str(script)], capture_output=True, text=True, env=env)
+    assert proc.returncode == 0
+    assert "executable not found" in proc.stderr
+    assert "nonexistent-xyz-abc" in proc.stderr
 
 
 def _write_and_chmod(text, path=None):

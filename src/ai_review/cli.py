@@ -28,7 +28,8 @@ def _parse_dotted(entries: list[str]) -> dict:
     return out
 
 
-def _coerce(value: str):
+def _coerce(value: str) -> "str | int | float | bool":
+    """Best-effort scalar coercion for --config values (never raises)."""
     if value.lower() in ("true", "false"):
         return value.lower() == "true"
     try:
@@ -47,6 +48,7 @@ def _find_repo_dir() -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the ai-review argument parser (see :func:`main` for semantics)."""
     p = argparse.ArgumentParser(prog="ai-review",
                                 description="AI Git pre-commit review agent")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -65,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    """CLI entry point.
+
+    Exit codes: 0 = PASS / WARN / allow-on-failure, 1 = BLOCK, 2 = error
+    (bad flags aside, every handled failure prints ``error: ...`` on stderr
+    and returns 2 — a pre-commit consumer must never see a traceback).
+    """
     args = build_parser().parse_args(argv)
     repo_dir = _find_repo_dir()
 
@@ -92,13 +100,16 @@ def main(argv=None) -> int:
         print("\n".join(lines))
         return rc
 
-    overrides = _parse_dotted(args.config)
-    if args.provider:
-        overrides.setdefault("llm", {})["provider"] = args.provider
-    if args.endpoint:
-        overrides.setdefault("llm", {})["endpoint"] = args.endpoint
-
+    # Overrides parsing, flag folding and layered load all share one failure
+    # contract: ANY malformed --config shape (e.g. scalar-then-dotted conflict
+    # "a=1" + "a.b=2") must yield "error: invalid configuration" + exit 2,
+    # never an uncaught traceback (which a hook consumer would read as BLOCK).
     try:
+        overrides = _parse_dotted(args.config)
+        if args.provider:
+            overrides.setdefault("llm", {})["provider"] = args.provider
+        if args.endpoint:
+            overrides.setdefault("llm", {})["endpoint"] = args.endpoint
         cfg = load_config_for_repo(repo_dir, cli_overrides=overrides or None)
     except Exception as exc:
         print(f"error: invalid configuration: {exc}", file=sys.stderr)

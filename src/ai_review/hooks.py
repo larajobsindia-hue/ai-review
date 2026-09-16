@@ -1,4 +1,11 @@
-"""Pre-commit hook install / uninstall with safe integration."""
+"""Pre-commit hook install / uninstall with safe integration.
+
+Layout limitation (Phase 1 semantic): :func:`_hooks_dir` assumes a standard
+``<repo>/.git/hooks`` directory. Repos using ``core.hooksPath``, git
+worktrees/submodules (where ``.git`` is a file) or a relocated hooks dir are
+not supported — install fails loud with an error (CLI exit 2) and never
+corrupts an existing hook.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,6 +42,16 @@ def _is_ours(path: Path) -> bool:
 
 
 def install_hook(repo_dir: str, exe: str = "ai-review") -> str:
+    """Install our wrapper as ``<repo>/.git/hooks/pre-commit``.
+
+    Returns ``"installed"`` (no prior hook) or ``"installed (wrapped existing
+    hook)"`` (a foreign hook was displaced). Re-installing over our own hook
+    rewrites the wrapper and leaves the existing backup untouched.
+
+    The backup always mirrors the *currently displaced* hook: installing over
+    foreign hook A, then over foreign hook B, replaces the backup with B
+    (single-generation backup; A is gone — deliberate Phase 1 semantic).
+    """
     hooks = _hooks_dir(repo_dir)
     hooks.mkdir(parents=True, exist_ok=True)
     hook = hooks / "pre-commit"
@@ -52,7 +69,8 @@ def install_hook(repo_dir: str, exe: str = "ai-review") -> str:
 
 
 def _render_wrapper(exe: str, has_backup: bool) -> str:
-    head = "#!/usr/bin/env bash\n"
+    # POSIX sh proven (dash): the wrapper uses only sh-legal constructs.
+    head = "#!/bin/sh\n"
     marker_line = f"# {HOOK_MARKER} v{__version__} :: do-not-edit\n"
     backup = (
         BACKUP_SEGMENT.format(marker=HOOK_MARKER, backup=BACKUP_NAME)
@@ -64,6 +82,12 @@ def _render_wrapper(exe: str, has_backup: bool) -> str:
 
 
 def uninstall_hook(repo_dir: str) -> str:
+    """Remove only our hook integration.
+
+    Returns ``"restored"`` (backup written back over our wrapper, backup
+    deleted), ``"removed"`` (our hook deleted, nothing to restore), or
+    ``"no op"`` (no hook, or a foreign hook we must not touch).
+    """
     hooks = _hooks_dir(repo_dir)
     hook = hooks / "pre-commit"
     backup = hooks / BACKUP_NAME

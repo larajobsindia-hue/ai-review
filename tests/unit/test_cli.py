@@ -177,6 +177,22 @@ def test_invalid_config_exit_two(repo, capsys):
     assert "invalid configuration" in err
 
 
+def test_conflicting_override_shapes_exit_two_not_crash(repo, capsys):
+    # "a=1" makes overrides["a"] an int; the later dotted "a.b=2" then hits
+    # setdefault on a non-dict. Before the fix this raised an uncaught
+    # TypeError -> traceback -> exit 1, which a pre-commit/CI consumer reads
+    # as "review BLOCKED". It must be a clean error: exit 2.
+    rc = main(["--config", "a=1", "--config", "a.b=2"])
+    err = capsys.readouterr().err
+    assert rc == EXIT_ERROR
+    assert "error: invalid configuration" in err
+
+
+def test_dotted_override_later_wins():
+    assert _parse_dotted(["a.b=1", "a.b=2"]) == {"a": {"b": 2}}
+    assert _parse_dotted(["a.b=2", "a.b=1"]) == {"a": {"b": 1}}
+
+
 # -- hook management ---------------------------------------------------------
 
 
