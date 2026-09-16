@@ -93,7 +93,15 @@ def _split_header_paths(rest: str) -> tuple[str, str] | None:
 
 
 def _header_new_path(line: str) -> str | None:
-    parts = _split_header_paths(line[len(_DIFF_GIT_PREFIX):])
+    """Extract the b/ path; unquoted paths may contain spaces, so when no
+    token is quoted (a path needing quoting would contain '"'), take
+    everything after the LAST " b/" separator, matching git's own
+    disambiguation. Quoted/mixed headers go through the tokenizer."""
+    rest = line[len(_DIFF_GIT_PREFIX):]
+    if '"' not in rest:
+        new = rest.rsplit(" b/", 1)[-1]
+        return _strip_prefix(new) if new else None
+    parts = _split_header_paths(rest)
     if parts is None:
         return None
     _, new = parts

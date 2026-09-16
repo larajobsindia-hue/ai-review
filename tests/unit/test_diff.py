@@ -120,3 +120,23 @@ def test_quoted_octal_path_hunks_attached():
     attach_hunks(changes, parsed)
     assert changes[0].hunks[0].added_lines == ["// nihongo"]
 
+SPACE_PATH_DIFF = """diff --git a/we ird.go b/we ird.go
+index 111..222 100644
+--- a/we ird.go
++++ b/we ird.go
+@@ -1 +1,2 @@
+ package main
++// spaced
+"""
+
+def test_unquoted_space_path_hunks_attached():
+    parsed = parse_unified_diff(SPACE_PATH_DIFF)
+    assert set(parsed) == {"we ird.go"}
+    h = parsed["we ird.go"][0]
+    assert (h.old_start, h.old_count) == (1, 1)
+    assert (h.new_start, h.new_count) == (1, 2)
+    assert h.added_lines == ["// spaced"]
+    changes = [StagedChange(path="we ird.go", status="modified")]
+    attach_hunks(changes, parsed)
+    assert changes[0].hunks[0].added_lines == ["// spaced"]
+
