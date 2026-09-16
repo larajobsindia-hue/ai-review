@@ -50,3 +50,20 @@ def test_collect_staged_rename(repo):
     changes = collect_staged(str(repo))
     renamed = [c for c in changes if c.status == "renamed"]
     assert renamed and renamed[0].path == "new.go"
+    assert renamed[0].old_path == "old.go"
+    assert renamed[0].stat_added == 0
+    assert renamed[0].stat_removed == 0
+
+
+def test_collect_staged_binary(repo):
+    (repo / "img.png").write_bytes(bytes(range(256)))
+    _git(repo, "add", "img.png")
+    _git(repo, "commit", "-qm", "img-init")
+    (repo / "img.png").write_bytes(bytes(range(256))[::-1])
+    _git(repo, "add", "-A")
+    changes = collect_staged(str(repo))
+    binary = [c for c in changes if c.path == "img.png"]
+    assert binary
+    assert binary[0].status == "modified"
+    assert binary[0].is_binary is True
+    assert binary[0].stat_added == 0
