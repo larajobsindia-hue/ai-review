@@ -2,7 +2,7 @@
 
 Technology-agnostic, provider-agnostic AI Git pre-commit code review agent.
 Runs entirely against your staged changes before every commit: security scan,
-secret redaction, deterministic checks, then an LLM review whose findings are
+secret redaction, then an LLM review whose findings are
 enforced by a policy engine (block on CRITICAL/HIGH findings).
 
 ## Install
@@ -12,6 +12,9 @@ pipx install ai-review          # or: pip install ai-review
 # or with uv:
 uv tool install ai-review
 ```
+
+> Not yet published to PyPI — until then, install from a checkout:
+> `pip install .` (or `pipx install .`).
 
 Requires Python >= 3.10.
 
@@ -49,6 +52,9 @@ Exit codes:
 | 0    | review passed (clean, or warn-level findings)  |
 | 1    | commit blocked (policy-matching findings)      |
 | 2    | error (not a git repo, bad config, hook issue) |
+
+> `--doctor` reuses exit 1 for "system not ready" (any probe errored);
+> it never blocks a commit — only `--staged` runs the gate.
 
 `--doctor` probes git, the repository, configuration layers, language
 detection, prompt assets, redaction, hook state, and the LLM endpoint. A

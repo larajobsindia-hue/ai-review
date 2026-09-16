@@ -17,9 +17,11 @@ llm:
   max_tokens: 4096
 
 # Secret redaction and file exclusions applied before anything reaches the LLM.
+# NOTE: repo-level excluded_files REPLACE the default list wholesale
+# (defaults: [".env", "*.pem", "*.key", "*.p12"]) — re-list everything you need.
 security:
   redact_secrets: true
-  excluded_files: [".env", "*.pem", "*.key"]
+  excluded_files: [".env", "*.pem", "*.key", "*.p12"]
 
 # Which findings block the commit.
 policy:
@@ -39,6 +41,7 @@ checks:
   commands: []
 
 # Surrounding lines attached to each diff hunk for the LLM prompt.
+# (Phase 2: the context engine — honored by config schema today, wiring lands later.)
 context:
   enabled: true
   lines_before: 30
