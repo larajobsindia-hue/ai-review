@@ -56,11 +56,11 @@ def test_terminal_pass_label_appends_summary_when_clean():
     assert text.rstrip().endswith("all clear")
 
 
-def test_terminal_block_with_no_issues_omits_summary():
+def test_terminal_block_with_no_issues_shows_summary():
     r = ReviewResult(decision="BLOCK", summary="blocked hard")
     text = render_terminal(r, profile=None, meta={})
     assert "RESULT: COMMIT BLOCKED" in text
-    assert "blocked hard" not in text
+    assert "blocked hard" in text
 
 
 def test_terminal_renders_checks_pass_and_fail():
@@ -143,3 +143,32 @@ def test_render_dispatch_markdown_and_unknown_falls_back_to_terminal():
     r, _ = _result()
     assert render(r, fmt="markdown", profile=None, meta={}).startswith("# AI Review: BLOCK")
     assert "COMMIT BLOCKED" in render(r, fmt="bogus")
+
+
+def test_block_with_no_issues_still_shows_summary():
+    r, _ = _result()
+    r.issues = []
+    r.summary = "AI review was skipped. LLM down"
+    text = render_terminal(r, profile=None, meta={})
+    assert "AI review was skipped. LLM down" in text
+
+
+def test_warn_with_issues_shows_summary():
+    r, _ = _result()
+    r.decision = "WARN"
+    text = render_terminal(r, profile=None, meta={})
+    assert "blocked" in text
+
+
+def test_unknown_decision_does_not_crash():
+    r, _ = _result()
+    r.decision = "MAYBE"
+    text = render_terminal(r, profile=None, meta={})
+    assert "RESULT: MAYBE" in text
+
+
+def test_markdown_escapes_pipe_in_title():
+    r, f = _result()
+    f.title = "bad | title"
+    md = render_markdown(r, profile=None, meta={})
+    assert "bad \\| title" in md
