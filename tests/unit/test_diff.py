@@ -100,3 +100,23 @@ def test_empty_and_header_only_input():
     assert set(parsed.keys()) == {"a.go"}
     assert parsed["a.go"] == []
 
+QUOTED_OCTAL_DIFF = r'''diff --git "a/\346\227\245\346\234\254.go" "b/\346\227\245\346\234\254.go"
+index 111..222 100644
+--- "a/\346\227\245\346\234\254.go"
++++ "b/\346\227\245\346\234\254.go"
+@@ -1 +1,2 @@
+ package main
++// nihongo
+'''
+
+def test_quoted_octal_path_hunks_attached():
+    parsed = parse_unified_diff(QUOTED_OCTAL_DIFF)
+    assert set(parsed) == {"日本.go"}
+    h = parsed["日本.go"][0]
+    assert (h.old_start, h.old_count) == (1, 1)
+    assert (h.new_start, h.new_count) == (1, 2)
+    assert h.added_lines == ["// nihongo"]
+    changes = [StagedChange(path="日本.go", status="modified")]
+    attach_hunks(changes, parsed)
+    assert changes[0].hunks[0].added_lines == ["// nihongo"]
+

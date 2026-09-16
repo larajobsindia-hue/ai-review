@@ -111,3 +111,46 @@ def test_cli_redact_forced_true_under_org_enforcement(tmp_path):
         repo_dir=str(tmp_path),
     )
     assert cfg.security.redact_secrets is True
+
+
+def test_repo_cannot_disable_org_enforcement(tmp_path):
+    defaults = _write(tmp_path, "default.yaml", DEFAULT_YAML)
+    org_yaml = _write(
+        tmp_path, "org.yaml",
+        "organization:\n  enforce: true\n  redact_secrets: true\n",
+    )
+    repo_yaml = _write(
+        tmp_path, "repo.yaml",
+        "organization:\n  enforce: false\nsecurity:\n  redact_secrets: false\n",
+    )
+    cfg = load_config(
+        defaults_yaml=defaults, org_yaml=org_yaml, user_yaml=None,
+        repo_yaml=repo_yaml, cli_overrides=None, repo_dir=str(tmp_path),
+    )
+    assert cfg.security.redact_secrets is True
+
+
+def test_cli_cannot_disable_org_enforcement(tmp_path):
+    defaults = _write(tmp_path, "default.yaml", DEFAULT_YAML)
+    org_yaml = _write(tmp_path, "org.yaml", "organization:\n  enforce: true\n")
+    cfg = load_config(
+        defaults_yaml=defaults, org_yaml=org_yaml, user_yaml=None,
+        repo_yaml=None,
+        cli_overrides={"organization": {"enforce": False}},
+        repo_dir=str(tmp_path),
+    )
+    assert cfg.security.redact_secrets is True
+
+
+def test_no_org_file_repo_may_disable_redact(tmp_path):
+    defaults = _write(tmp_path, "default.yaml", DEFAULT_YAML)
+    repo_yaml = _write(
+        tmp_path, "repo.yaml",
+        "organization:\n  enforce: false\nsecurity:\n  redact_secrets: false\n",
+    )
+    cfg = load_config(
+        defaults_yaml=defaults, org_yaml=None, user_yaml=None,
+        repo_yaml=repo_yaml, cli_overrides=None, repo_dir=str(tmp_path),
+    )
+    assert cfg.organization.enforce is False
+    assert cfg.security.redact_secrets is False

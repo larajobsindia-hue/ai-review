@@ -8,3 +8,6 @@ build/
 htmlcov/
 .pytest_cache/
 .ai-review-cache/
+.opencode/
+.superpowers/
+prompt.md

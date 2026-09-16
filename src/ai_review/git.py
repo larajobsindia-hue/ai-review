@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from ai_review.models import FileStatus, Hunk, StagedChange
+from ai_review.models import StagedChange
 
 
 class GitError(RuntimeError):
@@ -68,10 +68,10 @@ def git_name_status(cwd: str, ignore: tuple[str, ...] = ()) -> list[tuple[str, l
         if not entry:
             i += 1
             continue
-        if entry[0] in ("A", "M", "D"):
+        if entry[0] in ("A", "M", "D", "T"):
             pairs.append((entry, [raw[i + 1]] if i + 1 < len(raw) else []))
             i += 2
-        elif entry.startswith("R"):
+        elif entry[0] in ("R", "C"):
             pairs.append((entry, raw[i + 1 : i + 3] if i + 2 < len(raw) else []))
             i += 3
         else:
@@ -103,18 +103,23 @@ def collect_staged(cwd: str, ignore: tuple[str, ...] = ()) -> list[StagedChange]
     numstat = git_numstat(root, ignore)
     changes: list[StagedChange] = []
     for status, paths in name_status:
-        if status.startswith("R"):
+        if status[0] in ("R", "C"):
+            if len(paths) < 2:
+                continue
             old, new = paths
             if _ignored(new, ignore):
                 continue
             added, removed, binary = numstat.get(new, (0, 0, False))
-            changes.append(StagedChange(path=new, status="renamed", old_path=old,
+            kind = "renamed" if status[0] == "R" else "added"
+            changes.append(StagedChange(path=new, status=kind, old_path=old,
                                         is_binary=binary, stat_added=added, stat_removed=removed))
         else:
+            if not paths:
+                continue
             path = paths[0]
             if _ignored(path, ignore):
                 continue
-            kind: FileStatus = {"A": "added", "M": "modified", "D": "deleted"}[status]
+            kind = {"A": "added", "M": "modified", "D": "deleted", "T": "modified"}[status]
             added, removed, binary = numstat.get(path, (0, 0, False))
             changes.append(StagedChange(path=path, status=kind, is_binary=binary,
                                         stat_added=added, stat_removed=removed))

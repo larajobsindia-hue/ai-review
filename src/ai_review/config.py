@@ -121,6 +121,17 @@ def load_config(
     cli_overrides: dict | None = None,
     repo_dir: str | None = None,
 ) -> AppConfig:
+    # Snapshot the org layer's directives BEFORE merging: lower layers
+    # (user/repo/CLI) must not be able to weaken or disable them.
+    org_layer = _load_yaml(org_yaml) if isinstance(org_yaml, str) else org_yaml
+    org_directives: dict = {}
+    if isinstance(org_layer, dict):
+        directives = org_layer.get("organization")
+        if isinstance(directives, dict):
+            org_directives = directives
+    org_enforce = bool(org_directives.get("enforce", False))
+    org_redact = org_directives.get("redact_secrets")
+
     merged: dict = {}
     for candidate in (defaults_yaml, org_yaml, user_yaml, repo_yaml):
         layer = _load_yaml(candidate) if isinstance(candidate, str) else candidate
@@ -131,9 +142,10 @@ def load_config(
 
     cfg = AppConfig.model_validate(merged)
 
-    # Organization enforcement: repo/user layers cannot weaken mandatory rules.
-    if cfg.organization.enforce:
-        if cfg.organization.redact_secrets is not False:
+    # Organization enforcement: repo/user/CLI layers cannot weaken mandatory
+    # rules (they may only tighten); enforcement applies from the org snapshot.
+    if org_enforce:
+        if org_redact is not False:
             cfg.security.redact_secrets = True
     return cfg
 
