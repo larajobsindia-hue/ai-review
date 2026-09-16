@@ -112,17 +112,34 @@ def run_doctor(repo_dir: str) -> tuple[int, list[str]]:
     return 0, lines
 
 
-def _probe_llm(cfg: AppConfig) -> tuple[str, str]:
-    """Probe ``GET {endpoint}/v1/models`` within 3s; returns ``(status, note)``.
+_LLM_PROBE_TIMEOUT_S = 10.0
 
-    Any connection failure is a *warning*, not an error: a missing local LLM
-    server must not make doctor report the system as broken. ``trust_env``
-    is disabled so HTTP(S)_PROXY variables cannot route a localhost probe
-    through a proxy and produce a false "unreachable".
+
+def _probe_llm(cfg: AppConfig) -> tuple[str, str]:
+    """Probe the provider's models endpoint; returns ``(status, note)``.
+
+    URL is provider-aware: ``openai_compatible`` endpoints already include
+    ``/v1`` (the provider posts to ``{endpoint}/chat/completions``), so the
+    probe hits ``{endpoint}/models``; llama.cpp uses ``{endpoint}/v1/models``.
+    The configured ``api_key`` is sent as a bearer token so authenticated
+    gateways do not answer ``401`` to an anonymous probe. The timeout is a
+    generous 10s: far/remote endpoints can exceed short budgets and a
+    diagnostics tool must not flap to "unreachable" spuriously. Any
+    connection failure is a *warning*, not an error: a missing LLM server
+    must not make doctor report the system as broken. ``trust_env`` is
+    disabled so HTTP(S)_PROXY variables cannot hijack the probe.
     """
-    url = cfg.llm.endpoint.rstrip("/") + "/v1/models"
+    if cfg.llm.provider == "openai_compatible":
+        url = cfg.llm.endpoint.rstrip("/") + "/models"
+    else:
+        url = cfg.llm.endpoint.rstrip("/") + "/v1/models"
+    headers = {}
+    if cfg.llm.api_key:
+        headers["Authorization"] = f"Bearer {cfg.llm.api_key}"
     try:
-        response = httpx.get(url, timeout=3.0, trust_env=False)
+        response = httpx.get(
+            url, timeout=_LLM_PROBE_TIMEOUT_S, trust_env=False, headers=headers,
+        )
     except Exception:
         return "warn", f"{cfg.llm.provider} server unreachable"
     if response.status_code == 200:

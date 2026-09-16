@@ -107,10 +107,39 @@ def test_doctor_llm_http_200_is_ok(repo, monkeypatch):
     rc, lines = run_doctor(str(repo))
     assert _line(lines, "LLM endpoint").startswith("✓")
     assert rc == 0
-    # Probe contract: GET {endpoint}/v1/models within 3 seconds, ignoring
-    # proxy env vars so localhost probes cannot be hijacked.
+    # Probe contract: llama.cpp probes {endpoint}/v1/models within 10 seconds,
+    # ignoring proxy env vars so localhost probes cannot be hijacked. No auth
+    # header when no api_key is configured.
     assert seen["url"] == "http://127.0.0.1:8080/v1/models"
-    assert seen["kwargs"] == {"timeout": 3.0, "trust_env": False}
+    assert seen["kwargs"] == {"timeout": 10.0, "trust_env": False, "headers": {}}
+
+
+def test_doctor_llm_openai_compatible_probes_models_with_auth(repo, monkeypatch):
+    seen = {}
+
+    def _ok(url, **kwargs):
+        seen.update(url=url, kwargs=kwargs)
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("ai_review.doctor.httpx.get", _ok)
+    cfg_probe = repo / ".ai-review.yaml"
+    cfg_probe.write_text(
+        "llm:\n"
+        "  provider: openai_compatible\n"
+        "  endpoint: https://llm.example.com/v1\n"
+        "  api_key: sk-test-123\n",
+        encoding="utf-8",
+    )
+    rc, lines = run_doctor(str(repo))
+    assert _line(lines, "LLM endpoint").startswith("✓")
+    assert rc == 0
+    # openai_compatible endpoints already include /v1 (the provider posts to
+    # {endpoint}/chat/completions), so the probe targets {endpoint}/models
+    # and presents the configured key.
+    assert seen["url"] == "https://llm.example.com/v1/models"
+    assert seen["kwargs"]["timeout"] == 10.0
+    assert seen["kwargs"]["trust_env"] is False
+    assert seen["kwargs"]["headers"] == {"Authorization": "Bearer sk-test-123"}
 
 
 def test_doctor_llm_http_500_is_warn(repo, monkeypatch):
