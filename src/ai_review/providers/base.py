@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 
 import httpx
 
+from ai_review.config import LLMConfig
 from ai_review.models import PromptPayload, RawLLMResponse
 
 
@@ -19,7 +20,7 @@ class LlamaServerNotFound(ProviderError):
 class LLMProvider(ABC):
     name = "base"
 
-    def __init__(self, llm_cfg):
+    def __init__(self, llm_cfg: LLMConfig) -> None:
         self.cfg = llm_cfg
         self.client = httpx.Client(
             base_url=llm_cfg.endpoint,
@@ -54,9 +55,11 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def send(self, payload: PromptPayload, system_extra: str = "") -> RawLLMResponse:
+        """Send the payload; when *system_extra* is non-empty it is appended to
+        the system message content as ``system + "\\n" + system_extra``."""
         raise NotImplementedError
 
-    def _post(self, path: str, body: dict):
+    def _post(self, path: str, body: dict) -> httpx.Response:
         try:
             return self.client.post(path, json=body)
         except httpx.ConnectError as exc:
@@ -67,6 +70,8 @@ class LLMProvider(ABC):
             raise ProviderError(
                 f"LLM request timed out after {self.cfg.timeout_seconds}s"
             ) from exc
+        except httpx.TransportError as exc:
+            raise ProviderError(f"transport error talking to {self.cfg.endpoint}: {exc}") from exc
 
     def _parse_response(self, response: httpx.Response) -> RawLLMResponse:
         try:
@@ -79,7 +84,9 @@ class LLMProvider(ABC):
             choices = data["choices"]
             content = choices[0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderError(f"malformed provider response: {data!r}") from exc
+            raise ProviderError(f"malformed provider response: {str(data)[:500]!r}") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise ProviderError("empty completion from provider")
         return RawLLMResponse(
             text=content,
             provider=self.name,

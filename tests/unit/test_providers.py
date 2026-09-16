@@ -122,6 +122,22 @@ def test_timeout_raises_provider_error():
     assert calls
 
 
+def test_other_transport_error_raises_provider_error():
+    transport, calls = _make_transport(handler=_maybe_raise(httpx.ReadError))
+    prov = _provider_with({"provider": "llamacpp"}, transport)
+    with pytest.raises(ProviderError, match="transport error"):
+        prov.send(PAYLOAD)
+    assert calls
+
+
+def test_blank_content_raises_provider_error():
+    transport, calls = _make_transport([{"choices": [{"message": {"content": "   "}}]}])
+    prov = _provider_with({"provider": "llamacpp"}, transport)
+    with pytest.raises(ProviderError, match="empty completion"):
+        prov.send(PAYLOAD)
+    assert calls
+
+
 def test_invalid_json_body_raises_provider_error():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"not json")
