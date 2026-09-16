@@ -72,7 +72,7 @@ def test_parse_issue_field_defaults():
 
 
 def test_parse_malformed_json_raises():
-    with pytest.raises(ParseError, match="invalid JSON"):
+    with pytest.raises(ParseError, match="no JSON object|invalid JSON"):
         parse_llm_json('{"decision": PASS}')
 
 
@@ -85,3 +85,39 @@ def test_parse_invalid_severity_message():
     blob = '{"decision": "PASS", "summary": "s", "issues": [{"severity": "NOPE", "category": "BUG", "file": "a", "line": 1, "title": "t", "description": "d", "evidence": "e", "recommendation": "r", "confidence": 0.5}]}'
     with pytest.raises(ParseError, match="invalid severity 'NOPE'"):
         parse_llm_json(blob)
+
+
+def test_prose_braces_before_json_recovers():
+    blob = 'params like {a: 1} then {"decision": "PASS", "summary": "ok", "issues": []}'
+    assert parse_llm_json(blob).decision == "PASS"
+
+
+def test_trailing_prose_braces_after_fenced_json_recovers():
+    blob = '```json\n{"decision": "PASS", "summary": "ok", "issues": []}\n```\nextra prose with {stuff}'
+    assert parse_llm_json(blob).decision == "PASS"
+
+
+def test_brace_inside_string_value_survives():
+    blob = '{"decision": "PASS", "summary": "has } brace", "issues": []}'
+    result = parse_llm_json(blob)
+    assert result.summary == "has } brace"
+
+
+def test_no_json_at_all_still_raises():
+    with pytest.raises(ParseError, match="no JSON object"):
+        parse_llm_json("no braces here at all")
+
+
+def test_invalid_fenced_json_falls_through_to_plain_object():
+    blob = '```json\n{oops not json}\n```\n{"decision": "PASS", "summary": "ok", "issues": []}'
+    assert parse_llm_json(blob).decision == "PASS"
+
+
+def test_single_line_fenced_json_uses_fence_branch():
+    blob = '```json {"decision": "PASS", "summary": "ok", "issues": []}```'
+    assert parse_llm_json(blob).decision == "PASS"
+
+
+def test_tight_fenced_invalid_json_raises():
+    with pytest.raises(ParseError, match="no JSON object"):
+        parse_llm_json('```json {oops not json}```')

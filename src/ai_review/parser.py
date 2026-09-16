@@ -10,7 +10,7 @@ from ai_review.models import Finding, ReviewResult
 
 
 class ParseError(RuntimeError):
-    pass
+    """Raised when LLM output contains no parseable, schema-conforming JSON."""
 
 
 class _IssueModel(BaseModel):
@@ -32,22 +32,39 @@ class _ReviewModel(BaseModel):
     issues: list[_IssueModel] = Field(default_factory=list)
 
 
-def _extract_json(text: str) -> str:
+def _loads_dict(raw: str):
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+def _extract_json(text: str) -> dict:
+    """Return the first decodable JSON object in *text* (fenced JSON preferred).
+
+    Falls back to a ``raw_decode`` scan so braces inside surrounding prose or
+    inside string values cannot reject a conforming object.
+    """
     fences = re.search(r"```(?:json)?\s*(\{.*?\})```", text, re.S)
     if fences:
-        return fences.group(1)
-    match = re.search(r"\{.*\}", text, re.S)
-    if not match:
-        raise ParseError("no JSON object found in LLM output")
-    return match.group(0)
+        candidate = _loads_dict(fences.group(1))
+        if isinstance(candidate, dict):
+            return candidate
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            data, _end = decoder.raw_decode(text, idx)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    raise ParseError("no JSON object found in LLM output")
 
 
 def parse_llm_json(text: str, schema: dict | None = None) -> ReviewResult:
-    raw = _extract_json(text)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ParseError(f"invalid JSON: {exc}") from exc
+    data = _extract_json(text)
     try:
         model = _ReviewModel.model_validate(data)
     except ValidationError as exc:

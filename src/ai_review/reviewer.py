@@ -47,12 +47,27 @@ def review(
 
 
 class ReviewSession:
+    """One review exchange with a corrective retry on JSON conformance failure.
+
+    Counters: :attr:`attempts` is 1 after a successful first send, 2 after the
+    corrective retry; :attr:`corrective_used` is True only once the retry send
+    has been issued. If the corrective send itself fails at the transport
+    layer, the provider exception propagates and the counters keep their
+    pre-retry values. Use a fresh session per review run — counters do not
+    reset across multiple :meth:`run` calls.
+    """
+
     def __init__(self, provider: LLMProvider):
         self.provider = provider
         self.attempts = 0
         self.corrective_used = False
 
     def run(self, payload: PromptPayload) -> ReviewResult:
+        """Send, parse, and retry once with the corrective hint on ParseError.
+
+        A first-attempt parse failure on an already-corrective payload (or a
+        second consecutive failure) raises :class:`ReviewUnavailable`.
+        """
         raw = self._send(payload, corrective=False)
         self.attempts = 1
         try:
