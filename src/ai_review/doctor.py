@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from ai_review.config import load_config_for_repo
+from ai_review.config import AppConfig, load_config_for_repo
 from ai_review.detector import detect
 from ai_review.git import GitError, git_repo_root
 from ai_review.hooks import _is_ours
@@ -112,15 +112,17 @@ def run_doctor(repo_dir: str) -> tuple[int, list[str]]:
     return 0, lines
 
 
-def _probe_llm(cfg) -> tuple[str, str]:
+def _probe_llm(cfg: AppConfig) -> tuple[str, str]:
     """Probe ``GET {endpoint}/v1/models`` within 3s; returns ``(status, note)``.
 
     Any connection failure is a *warning*, not an error: a missing local LLM
-    server must not make doctor report the system as broken.
+    server must not make doctor report the system as broken. ``trust_env``
+    is disabled so HTTP(S)_PROXY variables cannot route a localhost probe
+    through a proxy and produce a false "unreachable".
     """
     url = cfg.llm.endpoint.rstrip("/") + "/v1/models"
     try:
-        response = httpx.get(url, timeout=3.0)
+        response = httpx.get(url, timeout=3.0, trust_env=False)
     except Exception:
         return "warn", f"{cfg.llm.provider} server unreachable"
     if response.status_code == 200:

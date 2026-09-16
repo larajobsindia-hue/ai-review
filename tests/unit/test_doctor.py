@@ -107,9 +107,10 @@ def test_doctor_llm_http_200_is_ok(repo, monkeypatch):
     rc, lines = run_doctor(str(repo))
     assert _line(lines, "LLM endpoint").startswith("✓")
     assert rc == 0
-    # Probe contract: GET {endpoint}/v1/models within 3 seconds.
+    # Probe contract: GET {endpoint}/v1/models within 3 seconds, ignoring
+    # proxy env vars so localhost probes cannot be hijacked.
     assert seen["url"] == "http://127.0.0.1:8080/v1/models"
-    assert seen["kwargs"] == {"timeout": 3.0}
+    assert seen["kwargs"] == {"timeout": 3.0, "trust_env": False}
 
 
 def test_doctor_llm_http_500_is_warn(repo, monkeypatch):
@@ -130,6 +131,11 @@ def test_doctor_llm_http_500_is_warn(repo, monkeypatch):
 def test_doctor_outside_git_repo_is_error(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("AI_REVIEW_ORG_CONFIG", raising=False)
+
+    def _refused(url, **kwargs):
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr("ai_review.doctor.httpx.get", _refused)
     rc, lines = run_doctor(str(tmp_path))
     assert _line(lines, "Git repository").startswith("✗")
     assert _line(lines, "System not ready").startswith("System not ready")
