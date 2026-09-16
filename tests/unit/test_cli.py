@@ -193,6 +193,25 @@ def test_dotted_override_later_wins():
     assert _parse_dotted(["a.b=2", "a.b=1"]) == {"a": {"b": 1}}
 
 
+# -- doctor ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fake_rc", [0, 1])
+def test_doctor_prints_lines_and_passes_rc_through(repo, monkeypatch, capsys, fake_rc):
+    seen = {}
+
+    def fake_run_doctor(repo_dir):
+        seen["repo_dir"] = repo_dir
+        return fake_rc, ["AI Review Doctor", "✓ fake probe"]
+
+    monkeypatch.setattr("ai_review.doctor.run_doctor", fake_run_doctor)
+    rc = main(["--doctor"])
+    out = capsys.readouterr().out
+    assert rc == fake_rc
+    assert seen["repo_dir"] == str(repo)
+    assert "AI Review Doctor" in out and "✓ fake probe" in out
+
+
 # -- hook management ---------------------------------------------------------
 
 

@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from ai_review import __version__
 from ai_review.classifier import classify
@@ -28,7 +27,7 @@ from ai_review.git import collect_staged, git_branch, git_diff_text, git_repo_ro
 from ai_review.parser import ParseError
 from ai_review.policy import FailureDecision, PolicyEngine
 from ai_review.profile import profile_from_names
-from ai_review.prompts import PromptBuilder
+from ai_review.prompts import PromptBuilder, default_prompt_dir
 from ai_review.providers.base import LlamaServerNotFound, ProviderError
 from ai_review.reviewer import ReviewSession
 from ai_review.security import redact_text, scan_staged
@@ -201,10 +200,7 @@ class Pipeline:
         return ""  # Phase 2: context engine
 
     def _prompt_dir(self) -> str:
-        # Anchor at the shipped package assets, not the CWD. (``ai_review.prompts``
-        # resolves to the prompts.py module — the asset directory sits beside it,
-        # so anchor from this file's location instead.)
-        return str(Path(__file__).resolve().parent / "prompts")
+        return default_prompt_dir()
 
     def _dry_run_report(self, meta, secret_kinds) -> str:
         if self.opts.cfg.security.redact_secrets:

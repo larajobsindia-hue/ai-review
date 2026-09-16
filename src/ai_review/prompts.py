@@ -48,6 +48,16 @@ MAX_DIFF_CHARS = 30_000
 _PROMPT_FILES = ["system.md", "review.md", "technology/generic.md"]
 
 
+def default_prompt_dir() -> str:
+    """The shipped prompt asset directory, anchored at this module.
+
+    ``ai_review.prompts`` is a module (``prompts.py``) and the assets live in
+    the sibling ``prompts/`` directory inside the installed package — never
+    resolve them from the CWD.
+    """
+    return str(Path(__file__).resolve().parent / "prompts")
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
