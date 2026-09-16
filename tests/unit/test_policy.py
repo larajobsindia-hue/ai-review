@@ -98,6 +98,7 @@ def test_failure_summaries_start_with_message_and_state_outcome():
 
 
 def test_failure_unknown_defaults_to_warn():
+    assert FailurePolicyConfig().on_llm_unavailable == "warn"
     out = FailureDecision().apply("bogus", "LLM down")
     assert out.decision == "WARN"
     assert out.summary.startswith("AI review was skipped. LLM down")

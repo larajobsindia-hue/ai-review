@@ -10,8 +10,17 @@ class PolicyEngine:
 
     def __init__(self, cfg: PolicyConfig):
         self.cfg = cfg
+        self._block_on = set(cfg.block_on)
 
     def decide(self, result: ReviewResult) -> ReviewResult:
+        """Compute the final decision from the validated issues only.
+
+        The incoming ``result.decision`` is ignored: BLOCK when any finding
+        passes :meth:`_blocks`, WARN when non-blocking issues remain, PASS
+        when none do. On BLOCK the summary is replaced with a policy-authored
+        message (the LLM's prose summary is not trusted for the gate); WARN
+        preserves it.
+        """
         if any(self._blocks(f) for f in result.issues):
             result.decision = "BLOCK"
             result.summary = "Blocking findings were validated against the staged changes."
@@ -28,7 +37,7 @@ class PolicyEngine:
             return finding.file is not None
         if finding.is_pre_existing:
             return False
-        if finding.severity not in set(self.cfg.block_on):
+        if finding.severity not in self._block_on:
             return False
         return finding.confidence >= self.cfg.minimum_confidence_to_block
 
@@ -41,6 +50,11 @@ class FailureDecision:
     """
 
     def apply(self, on_llm_unavailable: str, message: str) -> ReviewResult:
+        """Map a failure_policy value to a deterministic ReviewResult.
+
+        Never claims the AI review passed — the summary always states the
+        commit was reviewed-skipped and which failure_policy outcome applied.
+        """
         reason = "AI review was skipped. " + message
         if on_llm_unavailable == "block":
             return ReviewResult(

@@ -14,6 +14,9 @@ def validate_findings(result: ReviewResult, changes: list[StagedChange]) -> Revi
     (line ignored) or its file is staged and its line falls inside the union
     of that file's hunks' changed_new_lines. A BLOCK decision is downgraded
     to WARN when no kept finding can justify blocking.
+
+    Mutates ``result.issues`` (and possibly ``result.decision``) in place and
+    returns the same object.
     """
     file_lines: dict[str, set[int]] = {}
     for change in changes:
