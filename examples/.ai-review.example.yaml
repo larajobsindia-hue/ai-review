@@ -1,0 +1,45 @@
+# ai-review example configuration
+#
+# Copy this file to the repository root as `.ai-review.yaml` and customize.
+# User-level settings live in ~/.config/ai-review/config.yaml instead.
+#
+# Layer precedence (highest wins):
+#   CLI args > repo .ai-review.yaml > user config.yaml > org config
+# For an organization-wide baseline, point AI_REVIEW_ORG_CONFIG at a shared
+# YAML file, e.g.:  export AI_REVIEW_ORG_CONFIG=/etc/ai-review/org.yaml
+
+# LLM backend used for the review pass.
+llm:
+  provider: llamacpp          # llamacpp | openai_compatible
+  endpoint: http://127.0.0.1:8080
+  model: auto
+  timeout_seconds: 120
+  max_tokens: 4096
+
+# Secret redaction and file exclusions applied before anything reaches the LLM.
+security:
+  redact_secrets: true
+  excluded_files: [".env", "*.pem", "*.key"]
+
+# Which findings block the commit.
+policy:
+  block_on: [CRITICAL, HIGH]
+  minimum_confidence_to_block: 0.80
+
+# What to do when the LLM cannot be reached: block | warn | allow
+failure_policy:
+  on_llm_unavailable: warn
+
+# Deterministic checks (Phase 3). Repo-side `commands` only run if allowlisted
+# by the org's `trusted_commands`; both are lists of command mappings.
+checks:
+  enabled: true
+  auto_detect: true
+  trusted_commands: []
+  commands: []
+
+# Surrounding lines attached to each diff hunk for the LLM prompt.
+context:
+  enabled: true
+  lines_before: 30
+  lines_after: 30
