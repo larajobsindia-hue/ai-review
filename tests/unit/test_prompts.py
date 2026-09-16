@@ -202,6 +202,13 @@ def test_format_diff_truncation_marks_cut():
     assert "OVERFLOW_TAIL" not in rendered
 
 
+def test_format_diff_at_exact_budget_no_marker():
+    at_cap = "x" * MAX_DIFF_CHARS
+    rendered = format_diff([], at_cap, _go_profile())
+    assert "truncated" not in rendered
+    assert at_cap in rendered
+
+
 def test_format_diff_is_deterministic():
     changes = _mixed_changes()
     body = "y" * (MAX_DIFF_CHARS + 7)

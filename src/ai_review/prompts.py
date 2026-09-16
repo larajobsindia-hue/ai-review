@@ -155,6 +155,10 @@ def prompt_version(prompt_dir: str) -> str:
 
     The digest covers the three prompt files (relative path plus content), so a
     content change in any asset invalidates the cache key.
+
+    Raises ``FileNotFoundError`` if an asset is missing; callers must gate on
+    :func:`prompt_files_ok` (e.g. ``--doctor``) or guarantee a complete install
+    before computing the version.
     """
     digest = hashlib.sha256()
     for rel in _PROMPT_FILES:
