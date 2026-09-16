@@ -79,18 +79,18 @@ class Pipeline:
         root = git_repo_root(repo_dir)
         return {"repo": os.path.basename(root), "branch": git_branch(root)}
 
-    def collect(self):
+    def collect(self) -> tuple[str, list]:
         """Collect staged changes and attach parsed hunks; returns (root, changes)."""
         root = git_repo_root(self.opts.repo_dir)
         changes = collect_staged(root, ignore=())
-        attach_hunks(changes, parse_unified_diff(git_diff_text(root)))
+        attach_hunks(changes, parse_unified_diff(self._diff_text(root)))
         return root, changes
 
     def select_only(self, name: str):
         """Phase 4 hook: select a partial review target. Returns None until then."""
         return None
 
-    def run(self):
+    def run(self) -> "ReviewResult | str":
         """Execute the full review.
 
         Returns a :class:`~ai_review.models.ReviewResult` normally; the dry-run
@@ -127,7 +127,9 @@ class Pipeline:
             # contract (never claim the AI review passed). The failure_policy
             # outcome therefore stands — unless the gate BLOCKs on real,
             # validated findings: offline + a staged secret still blocks via
-            # hard_block.
+            # hard_block. NOTE: validate_findings also transiently downgrades
+            # a failure-BLOCK to WARN (no CRITICAL/HIGH findings); this rescue
+            # is what restores it — do not reorder run() without preserving it.
             outcome = FailureDecision().apply(
                 cfg.failure_policy.on_llm_unavailable, message)
             outcome.issues = gated.issues
@@ -152,6 +154,7 @@ class Pipeline:
         Returns ``(meta, secret_kinds, security_findings, profile, changes,
         redacted_diff)``.
         """
+        self._last_diff_text = None  # per-run cache; collect() fetches once
         root, changes = self.collect()
         cfg = self.opts.cfg
         names = [c.path for c in changes]
@@ -159,7 +162,7 @@ class Pipeline:
         # Review depth (Phase 1: computed per the wired sequence; consumed by
         # later phases when depth-aware chunking lands).
         _classes = classify(names, cfg.generated.ignore)
-        diff_text = git_diff_text(root)
+        diff_text = self._diff_text(root)
         if cfg.security.redact_secrets:
             redacted, secret_kinds = redact_text(diff_text)
         else:
@@ -175,7 +178,14 @@ class Pipeline:
             "checks": [],
             "duration_s": None,
         })
+        self._last_diff_text = diff_text
         return meta, secret_kinds, security_findings, profile, changes, redacted
+
+    def _diff_text(self, root: str) -> str:
+        """The staged unified diff, fetched once per run and reused."""
+        if getattr(self, "_last_diff_text", None) is None:
+            self._last_diff_text = git_diff_text(root)
+        return self._last_diff_text
 
     def _review(self, profile, changes, redacted):
         builder = PromptBuilder(self._prompt_dir())
@@ -197,6 +207,10 @@ class Pipeline:
         return str(Path(__file__).resolve().parent / "prompts")
 
     def _dry_run_report(self, meta, secret_kinds) -> str:
+        if self.opts.cfg.security.redact_secrets:
+            redaction = "matched: " + (", ".join(secret_kinds) or "none")
+        else:
+            redaction = "disabled"
         lines = [
             f"ai-review v{__version__} dry-run",
             f"repo: {meta['repo']}  branch: {meta['branch']}",
@@ -206,7 +220,7 @@ class Pipeline:
             "  1. git diff --cached (collect staged)",
             "  2. detect technologies -> profile",
             "  3. classify files -> review depth",
-            "  4. redact secrets (matched: " + (", ".join(secret_kinds) or "none") + ")",
+            f"  4. redact secrets ({redaction})",
             "  5. secret scan",
             "  6. build layered prompt",
             "  7. call LLM via configured provider  [SKIPPED in dry-run]",

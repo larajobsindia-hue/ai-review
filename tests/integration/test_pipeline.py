@@ -228,7 +228,9 @@ def test_run_stores_meta(repo):
     assert meta["checks"] == result.checks == []
 
 
-def test_build_pipeline_default_cfg(repo):
+def test_build_pipeline_default_cfg(repo, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     pipe = build_pipeline(str(repo))
     assert isinstance(pipe.opts.cfg, AppConfig)
     assert pipe.opts.provider is None
@@ -280,3 +282,18 @@ def test_llm_findings_validated_and_security_merged_first(repo):
     assert all(f.hard_block for f in result.issues)
     assert all(f.file == "x.py" for f in result.issues)
     assert not any(f.file == "ghost.py" for f in result.issues)
+
+
+def test_dry_run_reports_redaction_disabled(repo):
+    (repo / "main.go").write_text("package main\n")
+    _git(repo, "add", "-A")
+    cfg = AppConfig()
+    cfg.security.redact_secrets = False
+    pipe = build_pipeline(str(repo), cfg, provider=NeverProvider(), dry_run=True)
+    plan = pipe.run()
+    assert "redact secrets (disabled)" in plan
+
+
+class NeverProvider:
+    def send(self, payload):
+        raise AssertionError("provider must not be called")
