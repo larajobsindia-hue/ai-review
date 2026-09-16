@@ -21,6 +21,10 @@ def _git(root, *args):
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
+    # Hermetic: isolate HOME/XDG so a real ~/.config/ai-review/config.yaml on
+    # this machine cannot leak into the layered config these tests assert on.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "t@t.co")
     _git(tmp_path, "config", "user.name", "T")
@@ -145,9 +149,10 @@ class RecordingPipe:
 def test_config_overrides_reach_build_pipeline(repo, monkeypatch, capsys):
     captured = {}
 
-    def fake_build(repo_dir, cfg, *, provider=None, dry_run=False, verbose=False):
+    def fake_build(repo_dir, cfg, *, provider=None, dry_run=False, verbose=False,
+                   progress=None):
         captured.update(repo_dir=repo_dir, cfg=cfg, provider=provider,
-                        dry_run=dry_run, verbose=verbose)
+                        dry_run=dry_run, verbose=verbose, progress=progress)
         return RecordingPipe()
 
     monkeypatch.setattr("ai_review.cli.build_pipeline", fake_build)
@@ -279,3 +284,12 @@ def test_parse_dotted_empty_value_is_string():
 def test_coerce(raw, expected):
     assert _coerce(raw) == expected
     assert isinstance(_coerce(raw), type(expected))
+
+
+def test_progress_notice_printed_to_stderr(repo, failing_provider, capsys):
+    _stage(repo, "app.py")
+    rc = main(["--staged"])
+    err = capsys.readouterr().err
+    assert rc == EXIT_OK
+    assert "ai-review: reviewing 1 file(s)" in err
+    assert "with auto via llamacpp" in err

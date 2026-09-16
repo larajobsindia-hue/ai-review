@@ -47,6 +47,16 @@ def _find_repo_dir() -> str:
     return os.getcwd()
 
 
+def _print_reviewing_notice(info: dict) -> None:
+    """Progress hook: remote reviews can run for minutes — show activity now."""
+    print(
+        f"ai-review: reviewing {info['files']} file(s) "
+        f"(+{info['added']}/-{info['removed']}) with {info['model']} "
+        f"via {info['provider']} (timeout {info['timeout_seconds']}s)...",
+        file=sys.stderr, flush=True,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ai-review argument parser (see :func:`main` for semantics)."""
     p = argparse.ArgumentParser(prog="ai-review",
@@ -119,7 +129,8 @@ def main(argv=None) -> int:
         from ai_review.providers import make_provider
         provider = None if args.dry_run else make_provider(cfg)
         pipe = build_pipeline(repo_dir, cfg, provider=provider,
-                              dry_run=args.dry_run, verbose=args.verbose)
+                              dry_run=args.dry_run, verbose=args.verbose,
+                              progress=_print_reviewing_notice)
         result_or_text = pipe.run()
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)

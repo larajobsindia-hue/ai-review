@@ -297,3 +297,31 @@ def test_dry_run_reports_redaction_disabled(repo):
 class NeverProvider:
     def send(self, payload):
         raise AssertionError("provider must not be called")
+
+
+def test_progress_callback_fires_before_llm_call(repo):
+    (repo / "go.mod").write_text("module x\n")
+    (repo / "main.go").write_text("package main\n")
+    _git(repo, "add", "-A")
+    seen = []
+    pipe = build_pipeline(str(repo), AppConfig(),
+                          provider=StaticProvider([GOOD]),
+                          progress=seen.append)
+    result = pipe.run()
+    assert result.decision == "PASS"
+    assert len(seen) == 1
+    assert seen[0]["files"] == 2
+    assert seen[0]["provider"] == "llamacpp"
+    assert seen[0]["model"] == "auto"
+    assert "timeout_seconds" in seen[0]
+
+
+def test_progress_not_called_on_dry_run(repo):
+    (repo / "main.go").write_text("package main\n")
+    _git(repo, "add", "-A")
+    seen = []
+    pipe = build_pipeline(str(repo), AppConfig(), provider=NeverProvider(),
+                          dry_run=True, progress=seen.append)
+    plan = pipe.run()
+    assert "git diff --cached" in plan
+    assert seen == []

@@ -44,6 +44,7 @@ class RunnerOptions:
     dry_run: bool = False
     verbose: bool = False
     select_only: object = None  # Phase 4: partial-review selection hook
+    progress: object = None  # callable(dict) fired just before the LLM call
     meta: dict = field(default_factory=dict)
 
 
@@ -55,12 +56,19 @@ def build_pipeline(
     dry_run: bool = False,
     verbose: bool = False,
     select_only: object | None = None,
+    progress: object | None = None,
 ) -> Pipeline:
-    """Compose a :class:`Pipeline`; *cfg* defaults to the layered repo config."""
+    """Compose a :class:`Pipeline`; *cfg* defaults to the layered repo config.
+
+    *progress* is an optional ``callable(dict)`` invoked once just before the
+    LLM call with ``{"repo", "files", "added", "removed", "provider",
+    "model", "timeout_seconds"}`` — remote reviews can run for minutes, so
+    callers (the CLI) use it to surface immediate feedback on stderr.
+    """
     cfg = cfg or load_config_for_repo(repo_dir)
     return Pipeline(RunnerOptions(
         repo_dir=repo_dir, cfg=cfg, provider=provider, dry_run=dry_run,
-        verbose=verbose, select_only=select_only,
+        verbose=verbose, select_only=select_only, progress=progress,
     ))
 
 
@@ -103,6 +111,15 @@ class Pipeline:
             return self._dry_run_report(meta, secret_kinds)
 
         cfg = self.opts.cfg
+        if self.opts.progress is not None:
+            # Remote reviews can run for minutes; give the caller a hook to
+            # surface immediate feedback (the CLI writes it to stderr).
+            self.opts.progress({
+                "repo": meta["repo"], "files": meta["files"],
+                "added": meta["added"], "removed": meta["removed"],
+                "provider": cfg.llm.provider, "model": cfg.llm.model,
+                "timeout_seconds": cfg.llm.timeout_seconds,
+            })
         started = time.monotonic()
         failed = False
         message = ""
