@@ -1,0 +1,49 @@
+llm:
+  provider: llamacpp
+  endpoint: http://127.0.0.1:8080
+  model: auto
+  timeout_seconds: 120
+  max_tokens: 4096
+  json_mode: auto
+security:
+  redact_secrets: true
+  excluded_files:
+    - .env
+    - "*.pem"
+    - "*.key"
+    - "*.p12"
+policy:
+  block_on: [CRITICAL, HIGH]
+  minimum_confidence_to_block: 0.80
+failure_policy:
+  on_llm_unavailable: warn
+checks:
+  enabled: true
+  auto_detect: true
+  trusted_commands: []
+  commands: []
+context:
+  enabled: true
+  lines_before: 30
+  lines_after: 30
+  max_file_size_kb: 500
+  max_total_context_kb: 1000
+review:
+  max_diff_kb: 200
+  chunking:
+    enabled: true
+    max_chunk_kb: 50
+cache:
+  enabled: false
+generated:
+  policy: ignore
+  ignore:
+    - dist/
+    - build/
+    - coverage/
+    - node_modules/
+    - vendor/
+  security_only: []
+organization:
+  enforce: false
+  redact_secrets: null
