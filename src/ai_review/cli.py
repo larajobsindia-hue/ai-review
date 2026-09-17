@@ -67,6 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--uninstall-hook", action="store_true", help="remove only our hook integration")
     p.add_argument("--staged", action="store_true", help="review staged changes (default)")
     p.add_argument("--dry-run", action="store_true", help="show steps without calling the LLM")
+    p.add_argument("--static-only", action="store_true",
+                   help="run offline checks only (static + security + resolution), skip the LLM")
+    p.add_argument("--no-static-analysis", action="store_true",
+                   help="disable the static-analysis layer for this run")
     p.add_argument("--verbose", action="store_true", help="verbose output")
     p.add_argument("--format", choices=["terminal", "json", "markdown"], default="terminal")
     p.add_argument("--provider", help="override LLM provider")
@@ -120,6 +124,8 @@ def main(argv=None) -> int:
             overrides.setdefault("llm", {})["provider"] = args.provider
         if args.endpoint:
             overrides.setdefault("llm", {})["endpoint"] = args.endpoint
+        if args.no_static_analysis:
+            overrides.setdefault("static_analysis", {})["enabled"] = False
         cfg = load_config_for_repo(repo_dir, cli_overrides=overrides or None)
     except Exception as exc:
         print(f"error: invalid configuration: {exc}", file=sys.stderr)
@@ -127,9 +133,12 @@ def main(argv=None) -> int:
 
     try:
         from ai_review.providers import make_provider
-        provider = None if args.dry_run else make_provider(cfg)
+        # Both offline modes must not construct a provider at all: --dry-run
+        # (design: no external calls) and --static-only (no LLM by definition).
+        provider = None if (args.dry_run or args.static_only) else make_provider(cfg)
         pipe = build_pipeline(repo_dir, cfg, provider=provider,
-                              dry_run=args.dry_run, verbose=args.verbose,
+                              dry_run=args.dry_run, static_only=args.static_only,
+                              verbose=args.verbose,
                               progress=_print_reviewing_notice)
         result_or_text = pipe.run()
     except Exception as exc:

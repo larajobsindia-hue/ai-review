@@ -114,8 +114,31 @@ class OrganizationConfig(BaseModel):
     redact_secrets: bool | None = None
 
 
+class StaticAnalysisToolConfig(BaseModel):
+    """Per-tool switch (spec §28). A tool runs only when explicitly enabled."""
+    enabled: bool = True
+
+
+class StaticAnalysisConfig(BaseModel):
+    """Deterministic static-analysis layer (spec §28).
+
+    ``tools`` is an explicit opt-in map, so a bare ``AppConfig()`` runs nothing
+    and the test suite stays hermetic even on a machine with linters installed.
+    The shipped ``config/default.yaml`` enables the phase-1/2 tools.
+    ``fail_on_error`` is the only setting that can turn a tool problem into a
+    CLI error (exit 2); by default an optional tool can never fail a review.
+    """
+    enabled: bool = True
+    fail_on_error: bool = False
+    timeout: int = 120                      # per-tool seconds
+    concurrency: int = 4                    # bounded worker pool
+    max_findings: int = 200                 # per-tool cap before dedup/prompt
+    tools: dict[str, StaticAnalysisToolConfig] = Field(default_factory=dict)
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
+    static_analysis: StaticAnalysisConfig = StaticAnalysisConfig()
     security: SecurityConfig = SecurityConfig()
     resolution: ResolutionConfig = ResolutionConfig()
     policy: PolicyConfig = PolicyConfig()

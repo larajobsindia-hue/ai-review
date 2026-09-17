@@ -48,6 +48,21 @@ def llm_unreachable(repo, monkeypatch):
 # -- happy path ----------------------------------------------------------------
 
 
+def test_doctor_reports_static_analysis_section(repo, llm_unreachable):
+    rc, lines = run_doctor(str(repo))
+    text = "\n".join(lines)
+    assert "Static analysis" in text
+    assert rc == 0                      # missing optional tools are warnings only
+
+
+def test_doctor_static_section_respects_disabled_config(repo, llm_unreachable):
+    (repo / ".ai-review.yaml").write_text("static_analysis:\n  enabled: false\n",
+                                          encoding="utf-8")
+    rc, lines = run_doctor(str(repo))
+    assert "Static Analysis — disabled in config" in "\n".join(lines)
+    assert rc == 0
+
+
 def test_doctor_reports_ok_lines(repo, llm_unreachable):
     rc, lines = run_doctor(str(repo))
     text = "\n".join(lines)
@@ -78,10 +93,28 @@ def test_doctor_all_green_is_system_ready(repo, monkeypatch):
     monkeypatch.setattr("ai_review.doctor.httpx.get", _ok)
     rc, lines = run_doctor(str(repo))
     assert rc == 0
-    assert lines[-1] == "System ready."
+    # The summary is a readiness verdict, not a warning count: the optional
+    # static analyzers are not installed in this environment, so this is no
+    # longer the bare "System ready." line (that requires every enabled tool to
+    # be installed, which is exactly what doctor must stop claiming).
+    assert lines[-1].startswith("System ready")
+    assert "not ready" not in lines[-1]
     assert _line(lines, "Git hook").startswith("✓")
     assert "installed by ai-review" in _line(lines, "Git hook")
     assert _line(lines, "LLM endpoint").startswith("✓")
+
+
+def test_doctor_reports_installed_static_tools_with_versions(repo, monkeypatch,
+                                                             llm_unreachable):
+    from ai_review.static_analysis.base import StaticAnalyzer
+
+    monkeypatch.setattr(StaticAnalyzer, "resolve", lambda self, ctx: "/bin/true")
+    monkeypatch.setattr(StaticAnalyzer, "version", lambda self, ctx: "tool 9.9.9")
+    rc, lines = run_doctor(str(repo))
+    text = "\n".join(lines)
+    assert "✓ Static analysis: semgrep — tool 9.9.9" in text
+    assert "✓ Static analysis: phpstan — tool 9.9.9" in text
+    assert rc == 0
 
 
 # -- LLM endpoint probe ---------------------------------------------------------

@@ -93,6 +93,63 @@ def test_keeps_block_when_hard_block_kept():
     assert out.decision == "BLOCK"
 
 
+from ai_review.models import (StaticAnalysisSummary, StaticAssessment, ToolResult)
+
+
+def _static_finding(finding_id):
+    return Finding(severity="LOW", category="BUG", file="a.go", line=3, title="s",
+                   description="d", evidence="e", recommendation="r", confidence=0.6,
+                   source="static_analysis", id=finding_id, tool="semgrep")
+
+
+def _static_result(link="abc123",
+                   assessments=(("abc123", "confirmed"), ("nope", "uncertain"))):
+    change = StagedChange(path="a.go", status="modified",
+                          hunks=[Hunk(1, 5, 1, 5, changed_new_lines={3})])
+    issue = _finding("a.go", 3)
+    issue.related_static_finding_id = link
+    result = ReviewResult(
+        decision="WARN", summary="s", issues=[issue],
+        static=StaticAnalysisSummary(findings=[_static_finding("abc123")],
+                                     tools=[ToolResult(name="semgrep", status="run")]),
+        static_assessments=[StaticAssessment(finding_id=fid, verdict=verdict)
+                            for fid, verdict in assessments])
+    return result, [change]
+
+
+def test_unknown_static_link_is_dropped_but_the_issue_survives():
+    result, changes = _static_result(link="ghost")
+    out = validate_findings(result, changes)
+    assert out.issues[0].related_static_finding_id is None
+    assert len(out.issues) == 1
+
+
+def test_known_static_link_survives():
+    result, changes = _static_result()
+    assert validate_findings(result, changes).issues[0].related_static_finding_id == \
+        "abc123"
+
+
+def test_unknown_assessments_are_dropped():
+    result, changes = _static_result()
+    out = validate_findings(result, changes)
+    assert [a.finding_id for a in out.static_assessments] == ["abc123"]
+
+
+def test_links_are_cleared_when_static_analysis_is_off():
+    result, changes = _static_result()
+    result.static = None
+    out = validate_findings(result, changes)
+    assert out.issues[0].related_static_finding_id is None
+    assert out.static_assessments == []
+
+
+def test_static_reference_validation_does_not_change_the_decision():
+    result, changes = _static_result(link="ghost")
+    out = validate_findings(result, changes)
+    assert out.decision == "WARN"
+
+
 def test_multiple_hunks_union_changed_lines():
     change = StagedChange(path="a.go", status="modified", hunks=[
         Hunk(1, 5, 1, 5, changed_new_lines={3}),

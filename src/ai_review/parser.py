@@ -6,7 +6,12 @@ import re
 
 from pydantic import BaseModel, Field, ValidationError
 
-from ai_review.models import Finding, ReviewResult
+from ai_review.models import Finding, ReviewResult, StaticAssessment
+
+#: The AI's verdict vocabulary for a static finding (spec §27).
+VALID_VERDICTS = frozenset({
+    "confirmed", "likely_true", "uncertain", "likely_false_positive", "false_positive",
+})
 
 
 class ParseError(RuntimeError):
@@ -24,12 +29,21 @@ class _IssueModel(BaseModel):
     recommendation: str = ""
     confidence: float
     is_pre_existing: bool = False
+    #: References a static finding's ``id`` (validated against the run later).
+    related_static_finding_id: str | None = None
+
+
+class _AssessmentModel(BaseModel):
+    finding_id: str
+    verdict: str
+    reason: str = ""
 
 
 class _ReviewModel(BaseModel):
     decision: str
     summary: str
     issues: list[_IssueModel] = Field(default_factory=list)
+    static_assessments: list[_AssessmentModel] = Field(default_factory=list)
 
 
 def _loads_dict(raw: str):
@@ -74,12 +88,22 @@ def parse_llm_json(text: str, schema: dict | None = None) -> ReviewResult:
     for issue in model.issues:
         if issue.severity not in valid_severity:
             raise ParseError(f"invalid severity {issue.severity!r}")
+    for assessment in model.static_assessments:
+        if assessment.verdict not in VALID_VERDICTS:
+            raise ParseError(f"invalid static verdict {assessment.verdict!r}")
 
     findings = [
         Finding(severity=i.severity, category=i.category, file=i.file, line=i.line,
                 title=i.title, description=i.description, evidence=i.evidence,
                 recommendation=i.recommendation, confidence=float(i.confidence),
-                is_pre_existing=i.is_pre_existing)
+                is_pre_existing=i.is_pre_existing,
+                related_static_finding_id=i.related_static_finding_id)
         for i in model.issues
     ]
-    return ReviewResult(decision=model.decision, summary=model.summary, issues=findings)
+    return ReviewResult(
+        decision=model.decision, summary=model.summary, issues=findings,
+        static_assessments=[
+            StaticAssessment(finding_id=a.finding_id, verdict=a.verdict, reason=a.reason)
+            for a in model.static_assessments
+        ],
+    )

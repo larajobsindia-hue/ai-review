@@ -48,6 +48,33 @@ generated:
     - node_modules/
     - vendor/
   security_only: []
+static_analysis:
+  enabled: true
+  fail_on_error: false
+  timeout: 120
+  concurrency: 4
+  max_findings: 200
+  tools:
+    # Phase 1 (deterministic evidence for the AI reviewer)
+    semgrep: { enabled: true }
+    phpstan: { enabled: true }
+    eslint: { enabled: true }
+    ruff: { enabled: true }
+    staticcheck: { enabled: true }
+    # Phase 2
+    larastan: { enabled: true }
+    typescript: { enabled: true }
+    govet: { enabled: true }
+    sqlfluff: { enabled: true }
+    hadolint: { enabled: true }
+    trivy: { enabled: false }    # IaC scan: never downloads its DB in a pre-commit
+    # Phase 3 (explicit opt-in only)
+    codeql: { enabled: false }
+    sonarqube: { enabled: false }
+    checkov: { enabled: true }
+    tflint: { enabled: true }
+    kubeconform: { enabled: true }
+    kube_linter: { enabled: true }
 organization:
   enforce: false
   redact_secrets: null

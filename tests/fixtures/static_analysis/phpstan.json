@@ -1,0 +1,24 @@
+{
+  "totals": {"errors": 1, "file_errors": 4},
+  "files": {
+    "app/Services/OrderService.php": {
+      "errors": 2,
+      "messages": [
+        {"message": "Parameter #1 $id of method OrderService::find() expects int, string given.",
+         "line": 142, "ignorable": true, "identifier": "argument.type"},
+        {"message": "Method OrderService::missing() not found.", "line": 150,
+         "ignorable": false, "identifier": "method.notFound"}
+      ]
+    },
+    "app/Models/User.php": {
+      "errors": 2,
+      "messages": [
+        {"message": "Method App\\Models\\User::missingReturnType() has no return type specified.",
+         "line": 12, "ignorable": true, "identifier": "missingType.return"},
+        {"message": "Internal error: unexpected node at line 30.", "line": 30,
+         "ignorable": false}
+      ]
+    }
+  },
+  "errors": []
+}

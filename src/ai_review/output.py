@@ -7,9 +7,33 @@ from ai_review.models import RepoProfile, ReviewResult
 
 _WHEN = "━" * 34
 
+#: Per-tool status marks shared by the terminal renderer.
+_TOOL_MARKS = {"run": "✓", "unavailable": "⚠", "skipped": "·", "failed": "✗"}
+
 
 def _meta(meta: dict | None) -> dict:
     return meta or {}
+
+
+def _static_visible(result: ReviewResult) -> bool:
+    """Render the static block only when there is something honest to say.
+
+    Findings always qualify; otherwise a tool that actually ran (or failed) is
+    worth reporting, while an all-``skipped`` layer (disabled, dry-run, no
+    applicable files) stays silent so the pre-feature output is unchanged.
+    """
+    static = result.static
+    if static is None:
+        return False
+    return bool(static.findings) or any(tool.status != "skipped" for tool in static.tools)
+
+
+def _assessment_for(result: ReviewResult, finding_id: str | None) -> str:
+    """The AI's verdict on a static finding, verbatim-in-prose (or "")."""
+    for assessment in result.static_assessments:
+        if assessment.finding_id == finding_id:
+            return assessment.verdict.replace("_", " ")
+    return ""
 
 
 def render(result: ReviewResult, *, fmt: str = "terminal",
@@ -56,6 +80,25 @@ def render_terminal(result: ReviewResult, profile: RepoProfile | None,
     lines += [_WHEN]
     label = {"PASS": "RESULT: PASS", "BLOCK": "RESULT: COMMIT BLOCKED", "WARN": "RESULT: WARNING"}
     lines += [f" {label.get(result.decision, f'RESULT: {result.decision}')}", _WHEN, ""]
+    if _static_visible(result):
+        # Evidence, not a verdict: shown under its own heading so a tool report
+        # can never be read as the reason the commit was gated.
+        lines += [_WHEN, " Static Analysis", _WHEN,
+                  f"{len(result.static.findings)} finding(s) from the tool layer:"]
+        for tool in result.static.tools:
+            mark = _TOOL_MARKS.get(tool.status, "·")
+            note = f" — {tool.error}" if tool.error else ""
+            lines.append(f"{mark} {tool.name}{note}")
+        lines.append("")
+        for f in result.static.findings:
+            verdict = _assessment_for(result, f.id)
+            lines += [f"{f.severity} — {f.tool or 'static'}  {f.file}:{f.line or '?'}",
+                      f.title, f"Confidence: {int(f.confidence * 100)}%"]
+            if f.detected_by:
+                lines.append("Detected by " + ", ".join(f.detected_by))
+            if verdict:
+                lines.append(f"AI review: {verdict}")
+            lines.append("")
     for f in result.issues:
         lines += [f"{f.severity} — {f.category}", "", f"{f.file}:{f.line or '?'}", "",
                   f.title, "", f"Confidence: {int(f.confidence * 100)}%", "",
@@ -66,8 +109,12 @@ def render_terminal(result: ReviewResult, profile: RepoProfile | None,
 
 
 def render_json(result: ReviewResult) -> str:
-    """Stable JSON document (decision/summary/issues/checks) for CI consumers."""
-    return json.dumps({
+    """Stable JSON document (decision/summary/issues/checks) for CI consumers.
+
+    The static-analysis payload is attached only when the layer produced
+    something, so a pre-feature consumer sees the exact same document.
+    """
+    data = {
         "decision": result.decision,
         "summary": result.summary,
         "issues": [
@@ -79,7 +126,30 @@ def render_json(result: ReviewResult) -> str:
         ],
         "checks": [{"name": c.name, "command": c.command, "exit_code": c.exit_code}
                    for c in result.checks],
-    }, indent=2)
+    }
+    if result.static is not None:
+        data["static"] = {
+            "findings": [
+                {"id": f.id, "tool": f.tool, "rule_id": f.rule_id,
+                 "severity": f.severity, "original_severity": f.original_severity,
+                 "category": f.category, "file": f.file, "line": f.line,
+                 "title": f.title, "description": f.description, "evidence": f.evidence,
+                 "confidence": f.confidence, "fingerprint": f.fingerprint,
+                 "detected_by": f.detected_by}
+                for f in result.static.findings
+            ],
+            "tools": [{"name": t.name, "status": t.status, "exit_code": t.exit_code,
+                       "error": t.error, "duration_ms": t.duration_ms}
+                      for t in result.static.tools],
+            "files_analyzed": result.static.files_analyzed,
+            "duration_ms": result.static.duration_ms,
+            "counts": result.static.severity_counts(),
+        }
+    if result.static_assessments:
+        data["static_assessments"] = [
+            {"finding_id": a.finding_id, "verdict": a.verdict, "reason": a.reason}
+            for a in result.static_assessments]
+    return json.dumps(data, indent=2)
 
 
 def render_markdown(result: ReviewResult, profile: RepoProfile | None,
@@ -96,6 +166,18 @@ def render_markdown(result: ReviewResult, profile: RepoProfile | None,
         title = f.title.replace("|", "\\|").replace("\n", " ")
         out.append(f"| {f.severity} | {f.category} | {f.file} | {f.line or '-'} "
                    f"| {f.confidence:.2f} | {title} |")
+    if _static_visible(result):
+        out += ["", "## Static Analysis", "",
+                "| Severity | Tool | File | Line | Rule | Title |",
+                "|---|---|---|---|---|---|"]
+        for f in result.static.findings:
+            title = f.title.replace("|", "\\|").replace("\n", " ")
+            out.append(f"| {f.severity} | {f.tool or '-'} | {f.file} | {f.line or '-'} "
+                       f"| {f.rule_id or '-'} | {title} |")
+        for tool in result.static.tools:
+            if tool.status != "run":
+                out.append(f"- {tool.name}: {tool.status}"
+                           + (f" — {tool.error}" if tool.error else ""))
     out += ["", "## Checks", ""]
     for c in result.checks:
         out.append(f"- {'OK' if c.exit_code == 0 else 'FAIL'}: `{c.name}`")

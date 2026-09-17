@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from ai_review.config import load_config, merge_dict
+from ai_review.config import (AppConfig, StaticAnalysisConfig, load_config,
+                              merge_dict)
 
 DEFAULT_YAML = """
 llm:
@@ -140,6 +141,47 @@ def test_cli_cannot_disable_org_enforcement(tmp_path):
         repo_dir=str(tmp_path),
     )
     assert cfg.security.redact_secrets is True
+
+
+def test_static_analysis_defaults_are_explicit_opt_in():
+    cfg = AppConfig()
+    assert cfg.static_analysis.enabled is True
+    assert cfg.static_analysis.fail_on_error is False
+    assert cfg.static_analysis.timeout == 120
+    assert cfg.static_analysis.concurrency == 4
+    assert cfg.static_analysis.max_findings == 200
+    assert cfg.static_analysis.tools == {}          # nothing runs by default
+
+
+def test_static_analysis_tool_flags_merge_across_layers(tmp_path):
+    defaults = _write(tmp_path, "default.yaml", DEFAULT_YAML + (
+        "static_analysis:\n"
+        "  tools:\n"
+        "    semgrep: { enabled: true }\n"
+        "    codeql: { enabled: false }\n"
+    ))
+    repo_yaml = _write(tmp_path, "repo.yaml",
+                       "static_analysis:\n  tools:\n    codeql: { enabled: true }\n"
+                       "    ruff: { enabled: true }\n")
+    cfg = load_config(defaults_yaml=defaults, org_yaml=None, user_yaml=None,
+                      repo_yaml=repo_yaml, cli_overrides=None, repo_dir=str(tmp_path))
+    assert cfg.static_analysis.tools["semgrep"].enabled is True    # from defaults
+    assert cfg.static_analysis.tools["codeql"].enabled is True     # repo tightens
+    assert cfg.static_analysis.tools["ruff"].enabled is True       # repo adds
+
+
+def test_static_analysis_unknown_tool_key_is_tolerated():
+    cfg = StaticAnalysisConfig.model_validate({"tools": {"not_a_tool": {"enabled": True}}})
+    assert cfg.tools["not_a_tool"].enabled is True
+
+
+def test_cli_can_disable_static_analysis(tmp_path):
+    defaults = _write(tmp_path, "default.yaml", DEFAULT_YAML)
+    cfg = load_config(defaults_yaml=defaults, org_yaml=None, user_yaml=None,
+                      repo_yaml=None,
+                      cli_overrides={"static_analysis": {"enabled": False}},
+                      repo_dir=str(tmp_path))
+    assert cfg.static_analysis.enabled is False
 
 
 def test_no_org_file_repo_may_disable_redact(tmp_path):

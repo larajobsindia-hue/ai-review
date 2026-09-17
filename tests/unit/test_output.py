@@ -1,6 +1,7 @@
 import json
 
-from ai_review.models import CheckResult, Finding, ReviewResult
+from ai_review.models import (CheckResult, Finding, ReviewResult, StaticAnalysisSummary,
+                              StaticAssessment, ToolResult)
 from ai_review.output import render, render_json, render_markdown, render_terminal
 
 
@@ -172,3 +173,76 @@ def test_markdown_escapes_pipe_in_title():
     f.title = "bad | title"
     md = render_markdown(r, profile=None, meta={})
     assert "bad \\| title" in md
+
+
+# -- static-analysis evidence (design D1: rendered, never a gate) ---------------
+
+
+def _static_result():
+    static_finding = Finding(severity="HIGH", category="SECURITY", file="app/x.php", line=42,
+                             title="SQL injection", description="unsanitized input",
+                             evidence="rule: php.security.sql-injection",
+                             recommendation="parameterize", confidence=0.9,
+                             source="static_analysis", id="abc123", tool="semgrep",
+                             rule_id="php.security.sql-injection",
+                             original_severity="ERROR", original_message="Potential SQL injection.",
+                             detected_by=["phpstan", "semgrep"])
+    return ReviewResult(
+        decision="PASS", summary="ok", issues=[],
+        static=StaticAnalysisSummary(
+            findings=[static_finding],
+            tools=[ToolResult(name="semgrep", status="run", exit_code=1, duration_ms=12),
+                   ToolResult(name="ruff", status="unavailable", error="not found")]),
+        static_assessments=[StaticAssessment(finding_id="abc123", verdict="confirmed",
+                                             reason="reachable")])
+
+
+def test_terminal_renders_static_block_and_tool_states():
+    text = render_terminal(_static_result(), profile=None, meta={})
+    assert "Static Analysis" in text
+    assert "✓ semgrep" in text
+    assert "⚠ ruff — not found" in text
+    assert "app/x.php:42" in text
+    assert "SQL injection" in text
+    assert "RESULT: PASS" in text          # the tool finding never changed the decision
+
+
+def test_terminal_shows_the_ai_verdict_on_a_static_finding():
+    text = render_terminal(_static_result(), profile=None, meta={})
+    assert "Detected by phpstan, semgrep" in text
+    assert "AI review: confirmed" in text
+
+
+def test_terminal_omits_the_block_without_static_analysis():
+    text = render_terminal(ReviewResult(decision="PASS", summary="ok"), profile=None, meta={})
+    assert "Static Analysis" not in text
+
+
+def test_terminal_omits_the_block_when_every_tool_was_skipped():
+    result = ReviewResult(
+        decision="PASS", summary="ok",
+        static=StaticAnalysisSummary(
+            tools=[ToolResult(name="semgrep", status="skipped", error="dry-run")]))
+    assert "Static Analysis" not in render_terminal(result, profile=None, meta={})
+
+
+def test_json_includes_static_shape_only_when_present():
+    data = json.loads(render_json(_static_result()))
+    assert data["static"]["findings"][0]["id"] == "abc123"
+    assert data["static"]["findings"][0]["detected_by"] == ["phpstan", "semgrep"]
+    assert data["static"]["findings"][0]["original_severity"] == "ERROR"
+    assert data["static"]["tools"][0]["name"] == "semgrep"
+    assert data["static"]["counts"]["HIGH"] == 1
+    assert data["static_assessments"] == [
+        {"finding_id": "abc123", "verdict": "confirmed", "reason": "reachable"}]
+    plain = json.loads(render_json(ReviewResult(decision="PASS", summary="ok")))
+    assert "static" not in plain and "static_assessments" not in plain
+
+
+def test_markdown_has_static_section():
+    md = render_markdown(_static_result(), profile=None, meta={})
+    assert "## Static Analysis" in md
+    assert "| HIGH | semgrep | app/x.php | 42 |" in md
+    assert "- ruff: unavailable — not found" in md
+    plain = render_markdown(ReviewResult(decision="PASS", summary="ok"), profile=None, meta={})
+    assert "## Static Analysis" not in plain
