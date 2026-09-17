@@ -26,12 +26,31 @@ OUTPUT_JSON_SCHEMA: dict = {
                     "recommendation": {"type": "string"},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "is_pre_existing": {"type": "boolean"},
+                    # Optional: the static finding this issue assessed (spec §26).
+                    "related_static_finding_id": {"type": ["string", "null"]},
                 },
                 "required": [
                     "severity", "category", "file", "line", "title",
                     "description", "evidence", "recommendation",
                     "confidence", "is_pre_existing",
                 ],
+            },
+        },
+        # Optional: the AI's verdicts on static findings (spec §27). Not in
+        # ``required`` so existing endpoints/grammars keep validating.
+        "static_assessments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "finding_id": {"type": "string"},
+                    "verdict": {"enum": [
+                        "confirmed", "likely_true", "uncertain",
+                        "likely_false_positive", "false_positive",
+                    ]},
+                    "reason": {"type": "string"},
+                },
+                "required": ["finding_id", "verdict", "reason"],
             },
         },
     },
@@ -132,7 +151,8 @@ class PromptBuilder:
     def build(self, profile: RepoProfile, changes: list[StagedChange],
               diff_text: str, context_text: str, rules: str = "",
               tech_template: str | None = None,
-              max_diff_chars: int = MAX_DIFF_CHARS) -> PromptPayload:
+              max_diff_chars: int = MAX_DIFF_CHARS,
+              static_text: str = "") -> PromptPayload:
         """Build a :class:`PromptPayload` for one review.
 
         *tech_template* overrides the detected-technology layer (defaults to
@@ -140,9 +160,12 @@ class PromptBuilder:
         substituted with the profile table. *rules* renders the
         "# Repository Review Rules" section only when non-blank. *max_diff_chars*
         is the diff budget (``cfg.review.max_diff_kb * 1024`` from the pipeline);
-        the diff is cut here so no caller can bypass the budget, and an explicit
+        the diff        is cut here so no caller can bypass the budget, and an explicit
         partial-review notice is appended when a cut happens — a silently
         truncated diff would let unreviewed files be reported as reviewed.
+        *static_text* is the compact static-analysis evidence block (already
+        formatted and size-bounded by ``format_static_findings``); it is
+        rendered as its own section only when non-blank.
         """
         system = self._load("system.md")
         review = self._load("review.md")
@@ -172,6 +195,11 @@ class PromptBuilder:
             "# Staged Diff", diff_body,
             "# Relevant Context", context_text or "(none supplied)",
         ]
+        if static_text and static_text.strip():
+            # Deterministic tool evidence (design D1): a bounded, severity-ordered
+            # block. It is evidence for the AI to verify, never instructions it
+            # must obey, so it is labelled as findings rather than requirements.
+            user_parts += ["# Static Analysis Findings", static_text.strip()]
         if rules and rules.strip():
             user_parts += ["# Repository Review Rules", rules.strip()]
         user_parts += [

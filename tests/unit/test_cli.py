@@ -184,10 +184,11 @@ class RecordingPipe:
 def test_config_overrides_reach_build_pipeline(repo, monkeypatch, capsys):
     captured = {}
 
-    def fake_build(repo_dir, cfg, *, provider=None, dry_run=False, verbose=False,
-                   progress=None):
+    def fake_build(repo_dir, cfg, *, provider=None, dry_run=False, static_only=False,
+                   verbose=False, progress=None):
         captured.update(repo_dir=repo_dir, cfg=cfg, provider=provider,
-                        dry_run=dry_run, verbose=verbose, progress=progress)
+                        dry_run=dry_run, static_only=static_only,
+                        verbose=verbose, progress=progress)
         return RecordingPipe()
 
     monkeypatch.setattr("ai_review.cli.build_pipeline", fake_build)
@@ -206,6 +207,7 @@ def test_config_overrides_reach_build_pipeline(repo, monkeypatch, capsys):
     assert captured["cfg"].policy.minimum_confidence_to_block == 0.9
     assert captured["cfg"].llm.provider == "openai_compatible"
     assert captured["provider"] is not None
+    assert captured["static_only"] is False
     assert captured["verbose"] is True
     assert "RESULT: PASS" in out
 
@@ -231,6 +233,52 @@ def test_conflicting_override_shapes_exit_two_not_crash(repo, capsys):
 def test_dotted_override_later_wins():
     assert _parse_dotted(["a.b=1", "a.b=2"]) == {"a": {"b": 2}}
     assert _parse_dotted(["a.b=2", "a.b=1"]) == {"a": {"b": 1}}
+
+
+# -- static-analysis flags ---------------------------------------------------
+
+
+def test_no_static_analysis_flag_disables_it(repo, monkeypatch):
+    _stage(repo, "app.py")
+    captured = {}
+
+    def fake_build(repo_dir, cfg, **kwargs):
+        captured["cfg"] = cfg
+        return RecordingPipe()
+
+    monkeypatch.setattr("ai_review.cli.build_pipeline", fake_build)
+    monkeypatch.setattr("ai_review.providers.make_provider", lambda cfg: object())
+    assert main(["--staged", "--no-static-analysis"]) == EXIT_OK
+    assert captured["cfg"].static_analysis.enabled is False
+
+
+def test_static_only_never_builds_a_provider(repo, monkeypatch, capsys):
+    _stage(repo, "app.py")
+
+    def _boom(cfg):
+        raise AssertionError("make_provider must not be called on --static-only")
+
+    monkeypatch.setattr("ai_review.providers.make_provider", _boom)
+    rc = main(["--static-only"])
+    out = capsys.readouterr().out
+    assert rc == EXIT_OK
+    assert "RESULT: PASS" in out
+    assert "skipped (--static-only)" in out
+
+
+def test_static_only_still_exits_one_on_an_offline_hard_block(repo, monkeypatch):
+    _stage(repo, "creds.py", 'token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"\n')
+    monkeypatch.setattr("ai_review.providers.make_provider",
+                        lambda cfg: (_ for _ in ()).throw(AssertionError("no provider")))
+    assert main(["--static-only"]) == EXIT_BLOCK
+
+
+def test_dry_run_wins_over_static_only(repo, capsys):
+    _stage(repo, "app.py")
+    rc = main(["--dry-run", "--static-only"])
+    out = capsys.readouterr().out
+    assert rc == EXIT_OK
+    assert "dry-run" in out                       # the plan text, not a report
 
 
 # -- doctor ------------------------------------------------------------------

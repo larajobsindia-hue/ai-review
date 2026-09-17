@@ -16,6 +16,10 @@ ChangeKind = Literal[
     "source", "test", "config", "documentation", "database", "infrastructure",
     "dependency", "generated", "lock", "binary", "unknown",
 ]
+ToolStatus = Literal["run", "unavailable", "skipped", "failed"]
+StaticVerdict = Literal[
+    "confirmed", "likely_true", "uncertain", "likely_false_positive", "false_positive",
+]
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,65 @@ class Finding:
     confidence: float
     is_pre_existing: bool = False
     hard_block: bool = False
+    # -- static-analysis provenance (spec §18/§19/§26); all defaulted so the
+    #    existing constructors are unchanged and AI findings stay source="ai".
+    source: str = "ai"                      # "ai" | "static_analysis"
+    id: str | None = None                   # stable static id (deduplicator)
+    tool: str | None = None
+    rule_id: str | None = None
+    fingerprint: str | None = None
+    original_severity: str | None = None    # the analyzer's own severity string
+    original_message: str | None = None     # the analyzer's own message
+    detected_by: list[str] = field(default_factory=list)   # merged-tool provenance
+    related_static_finding_id: str | None = None           # AI issue -> static id
+
+
+@dataclass
+class ToolResult:
+    """Per-tool outcome row of a static-analysis run (spec §15/§23)."""
+    name: str
+    status: ToolStatus
+    exit_code: int | None = None
+    error: str = ""
+    duration_ms: int = 0
+
+
+@dataclass
+class AnalyzerResult:
+    """What one analyzer returns from ``analyze(ctx)`` (upstream §2)."""
+    findings: list[Finding] = field(default_factory=list)
+    status: ToolStatus = "run"
+    exit_code: int | None = None
+    error: str = ""
+    duration_ms: int = 0
+
+
+@dataclass
+class StaticAnalysisSummary:
+    """Everything static analysis produced for one review (spec §23)."""
+    findings: list[Finding] = field(default_factory=list)
+    tools: list[ToolResult] = field(default_factory=list)
+    files_analyzed: int = 0
+    duration_ms: int = 0
+
+    def severity_counts(self) -> dict[str, int]:
+        """Severity histogram with all five keys present (stable JSON shape)."""
+        out = {name: 0 for name in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")}
+        for finding in self.findings:
+            out[finding.severity] = out.get(finding.severity, 0) + 1
+        return out
+
+
+@dataclass
+class StaticAssessment:
+    """The AI's verdict on one static finding (spec §26/§27).
+
+    Stored separately from the finding: the original static finding is never
+    mutated by an AI verdict.
+    """
+    finding_id: str
+    verdict: StaticVerdict
+    reason: str = ""
 
 
 @dataclass
@@ -114,6 +177,11 @@ class ReviewResult:
     summary: str
     issues: list[Finding] = field(default_factory=list)
     checks: list[CheckResult] = field(default_factory=list)
+    #: Static-analysis evidence. Never merged into ``issues``: static findings
+    #: are input to the LLM, not input to the policy gate (design D1).
+    static: StaticAnalysisSummary | None = None
+    #: Validated AI verdicts on static findings (unknown ids dropped).
+    static_assessments: list[StaticAssessment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

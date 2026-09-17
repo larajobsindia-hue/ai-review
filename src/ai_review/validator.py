@@ -6,8 +6,28 @@ from ai_review.models import ReviewResult, StagedChange
 VALID_SEVERITY = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 
 
+def _validate_static_links(result: ReviewResult) -> None:
+    """Drop AI references to static findings that do not exist (spec §26/§27).
+
+    A hallucinated ``finding_id`` must never render as "Detected by semgrep": the
+    reference is removed and the AI finding itself is untouched. With static
+    analysis disabled there are no known ids, so every reference is dropped.
+    """
+    known = {f.id for f in (result.static.findings if result.static else []) if f.id}
+    result.static_assessments = [a for a in result.static_assessments
+                                 if a.finding_id in known]
+    for finding in result.issues:
+        if finding.related_static_finding_id and \
+                finding.related_static_finding_id not in known:
+            finding.related_static_finding_id = None
+
+
 def validate_findings(result: ReviewResult, changes: list[StagedChange]) -> ReviewResult:
     """Drop findings that do not anchor to a changed line in the staged set.
+
+    Static-finding references (``related_static_finding_id`` and
+    ``static_assessments``) are validated against the run's static findings
+    first, so provenance can never be claimed for an id that does not exist.
 
     A finding survives only if its severity is known, its confidence is in
     [0.0, 1.0], and either it is a hard_block finding whose file is staged
@@ -18,6 +38,8 @@ def validate_findings(result: ReviewResult, changes: list[StagedChange]) -> Revi
     Mutates ``result.issues`` (and possibly ``result.decision``) in place and
     returns the same object.
     """
+    _validate_static_links(result)
+
     file_lines: dict[str, set[int]] = {}
     for change in changes:
         lines = file_lines.setdefault(change.path, set())

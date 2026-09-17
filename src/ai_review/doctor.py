@@ -1,10 +1,12 @@
-"""Diagnostics: env, repo, config, detection, prompts, redaction, hook, LLM.
+"""Diagnostics: env, repo, config, detection, prompts, redaction, static
+tools, hook, LLM.
 
 ``run_doctor`` probes the environment in a fixed order and returns
 ``(exit_code, lines)`` where each line is ``✓/⚠/✗ label — note``. Exit code is
-0 when there are no errors (warnings allowed), 1 otherwise. A missing or
-unreachable local LLM server degrades to a warning, never a hard failure —
-doctor must succeed offline.
+0 when there are no errors (warnings allowed), 1 otherwise. Optional static
+analyzers are probed for availability/version and never count as errors. A
+missing or unreachable local LLM server degrades to a warning, never a hard
+failure — doctor must succeed offline.
 """
 from __future__ import annotations
 
@@ -17,8 +19,10 @@ from ai_review.config import AppConfig, load_config_for_repo
 from ai_review.detector import detect
 from ai_review.git import GitError, git_repo_root
 from ai_review.hooks import _is_ours
+from ai_review.models import RepoProfile
 from ai_review.prompts import default_prompt_dir, prompt_files_ok
 from ai_review.security import redact_text
+from ai_review.static_analysis.doctor import probe_static_analysis
 
 #: Sample secret for the redaction self-test (the canonical AWS example key).
 _SECRET_SAMPLE = "key=AKIAIOSFODNN7EXAMPLE"
@@ -30,8 +34,8 @@ def run_doctor(repo_dir: str) -> tuple[int, list[str]]:
     errors = 0
     warns = 0
 
-    def ok(label: str) -> None:
-        lines.append(f"✓ {label}")
+    def ok(label: str, note: str = "") -> None:
+        lines.append(f"✓ {label}" + (f" — {note}" if note else ""))
 
     def warn(label: str, note: str = "") -> None:
         nonlocal warns
@@ -62,6 +66,7 @@ def run_doctor(repo_dir: str) -> tuple[int, list[str]]:
         err("Configuration", str(exc))
         cfg = None
 
+    profile = RepoProfile()          # kept outside the try: reused by the probes
     try:
         profile = detect([], root)
         if profile.languages or profile.frameworks:
@@ -83,6 +88,17 @@ def run_doctor(repo_dir: str) -> tuple[int, list[str]]:
         err("Secret redaction", "self-test failed")
     else:
         ok("Secret redaction")
+
+    # Static-analysis layer: per-tool availability and version. A missing
+    # optional tool is always a warning — doctor must stay exit-0 offline.
+    if cfg is not None:
+        for probe in probe_static_analysis(cfg, root, profile):
+            if probe.status == "ok":
+                ok(probe.label, probe.note)
+            else:
+                warn(probe.label, probe.note)
+    else:
+        warn("Static Analysis", "skipped (no config)")
 
     hook = Path(root) / ".git" / "hooks" / "pre-commit"
     if hook.exists() and _is_ours(hook):

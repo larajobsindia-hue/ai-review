@@ -57,3 +57,19 @@ context:
   enabled: true
   lines_before: 30
   lines_after: 30
+
+# Deterministic static analysis: external tools whose findings are handed to the
+# AI as EVIDENCE (they never block a commit on their own — the policy engine and
+# the offline security/resolution gates decide blocking).
+static_analysis:
+  enabled: true
+  fail_on_error: false        # true: a failed tool becomes a CLI error (exit 2)
+  timeout: 120                # per-tool seconds
+  concurrency: 4              # bounded parallel tool execution
+  max_findings: 200           # per-tool cap before dedup
+  tools:                      # opt-in: a tool runs only when enabled here
+    semgrep: { enabled: true }  # needs a repo semgrep config; never --config auto
+    phpstan: { enabled: true }
+    eslint: { enabled: true }
+    ruff: { enabled: true }
+    staticcheck: { enabled: true }

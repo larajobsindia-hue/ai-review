@@ -1,0 +1,25 @@
+{
+  "results": [
+    {
+      "check_id": "php.lang.security.sql-injection.tainted-sql-string",
+      "path": "app/Models/User.php",
+      "start": {"line": 42, "col": 10},
+      "end": {"line": 42, "col": 50},
+      "extra": {
+        "message": "User input reaches a raw SQL string.",
+        "severity": "ERROR",
+        "fingerprint": "07f1c1f1f0e1d0c0b0a090807060504030201000",
+        "metadata": {"category": "security", "confidence": "HIGH", "cwe": ["CWE-89: SQL Injection"]}
+      }
+    },
+    {
+      "check_id": "python.lang.correctness.useless-eqeq",
+      "path": "app/util.py",
+      "start": {"line": 7},
+      "extra": {"message": "Comparison is always false.", "severity": "WARNING",
+                "fingerprint": "000102030405060708090a0b0c0d0e0f10111213",
+                "metadata": {"category": "correctness", "confidence": "MEDIUM"}}
+    }
+  ],
+  "errors": []
+}

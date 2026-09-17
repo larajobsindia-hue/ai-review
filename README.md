@@ -37,6 +37,8 @@ git commit --no-verify
 ```
 ai-review --staged                review staged changes (default action)
 ai-review --dry-run               show the review steps without calling the LLM
+ai-review --static-only           run offline checks only (static + security + resolution)
+ai-review --no-static-analysis    disable the static-analysis layer for this run
 ai-review --doctor                probe the environment and report readiness
 ai-review --verbose               verbose output
 ai-review --format terminal       terminal (default) | json | markdown
@@ -73,6 +75,22 @@ Precedence (high to low):
 
 See [`examples/.ai-review.example.yaml`](examples/.ai-review.example.yaml) for
 a fully commented example.
+
+## Static analysis
+
+`ai-review` runs the available external analyzers on your staged change set
+before the AI review and hands their findings to the model as **evidence**:
+
+- Tools are optional. A missing, slow, failing or unparsable tool is reported
+  and skipped; it never fails the review and never blocks a commit.
+- Tool findings never block by themselves. Only validated AI findings and the
+  offline gates (secrets, unresolved references) reach the policy engine.
+- The AI is asked to verify each finding against the source, classify false
+  positives explicitly, and reference the finding id it assessed.
+- No analyzer downloads rule databases or sends metrics: a run makes no network
+  calls of its own, and semgrep is never invoked with `--config auto`.
+- Turn the layer off for a run with `--no-static-analysis`, or inspect it
+  without an LLM via `--static-only`. `--doctor` lists per-tool availability.
 
 ## Privacy
 

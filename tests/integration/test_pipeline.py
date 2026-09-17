@@ -4,12 +4,16 @@ import subprocess
 
 import pytest
 
-from ai_review.config import AppConfig
+from ai_review.config import AppConfig, StaticAnalysisToolConfig
 from ai_review.models import RawLLMResponse, ReviewResult
 from ai_review.parser import ParseError
 from ai_review.pipeline import build_pipeline
 from ai_review.providers.base import LlamaServerNotFound, ProviderError
 from ai_review.providers.provider_bundle import StaticProvider
+from ai_review.static_analysis import registry
+from ai_review.static_analysis.base import StaticAnalyzer
+from ai_review.static_analysis.normalizer import make_finding
+from ai_review.static_analysis.runner import ToolRun
 
 GOOD = '{"decision": "PASS", "summary": "ok", "issues": []}'
 BAD = '{"decision": "PASS"'
@@ -405,3 +409,120 @@ def test_progress_not_called_on_dry_run(repo):
     plan = pipe.run()
     assert "git diff --cached" in plan
     assert seen == []
+
+
+# --- static-analysis layer (design D1/D5/D7) ------------------------------------
+
+
+def _stage(root, name, content="x = 1\n"):
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    _git(root, "add", name)
+    return path
+
+
+class FakeStaticAnalyzer(StaticAnalyzer):
+    """Registered stand-in for an installed tool (no binary needed offline)."""
+    name = "fake-static"
+    executable = "fake-static"
+    ok_exit_codes = (0,)
+
+    def build_argv(self, exe, ctx):
+        return [exe]
+
+    def parse(self, run, ctx):
+        return [make_finding(tool=self.name, severity="HIGH", rule_id="fake.rule",
+                             file="app.py", line=1, message="Static fake finding.")]
+
+
+@pytest.fixture
+def static_enabled(monkeypatch):
+    """Enable the fake analyzer end to end: registered + resolvable + fake run."""
+    monkeypatch.setitem(registry.REGISTRY, "fake-static", FakeStaticAnalyzer)
+    monkeypatch.setattr(StaticAnalyzer, "resolve", lambda self, ctx: "/bin/true")
+    monkeypatch.setattr("ai_review.static_analysis.base.run_tool",
+                        lambda argv, **kw: ToolRun(argv=list(argv), status="run",
+                                                   exit_code=0, stdout="[]"))
+    cfg = AppConfig()
+    cfg.static_analysis.tools = {"fake-static": StaticAnalysisToolConfig()}
+    return cfg
+
+
+def test_static_findings_reach_the_llm_payload(repo, static_enabled):
+    _stage(repo, "app.py")
+    rec = RecordingProvider()
+    result = build_pipeline(str(repo), static_enabled, provider=rec).run()
+    assert result.static is not None
+    assert [f.tool for f in result.static.findings] == ["fake-static"]
+    assert result.static.tools[0].status == "run"
+    assert "# Static Analysis Findings" in rec.payloads[0].user
+    assert "fake-static" in rec.payloads[0].user
+    assert "Static fake finding." in rec.payloads[0].user
+
+
+def test_static_findings_do_not_gate_the_policy(repo, static_enabled):
+    _stage(repo, "app.py")
+    result = build_pipeline(str(repo), static_enabled,
+                            provider=StaticProvider([GOOD])).run()
+    assert result.decision == "PASS"          # HIGH tool finding, not a hard block
+    assert result.issues == []
+
+
+def test_static_analysis_disabled_keeps_the_old_prompt(repo, static_enabled):
+    _stage(repo, "app.py")
+    static_enabled.static_analysis.enabled = False
+    rec = RecordingProvider()
+    result = build_pipeline(str(repo), static_enabled, provider=rec).run()
+    assert result.static is None
+    assert "# Static Analysis Findings" not in rec.payloads[0].user
+
+
+def test_static_only_never_calls_the_provider(repo, static_enabled):
+    _stage(repo, "app.py")
+    pipe = build_pipeline(str(repo), static_enabled,
+                          provider=DeadProvider(LlamaServerNotFound("must not be called")),
+                          static_only=True)
+    result = pipe.run()
+    assert pipe.last_session is None
+    assert result.static is not None
+    assert result.decision == "PASS"
+    assert "skipped" in result.summary.lower()
+    assert result.static.findings[0].tool == "fake-static"
+
+
+def test_static_only_still_blocks_on_a_staged_secret(repo, static_enabled):
+    _stage(repo, "creds.py", f'token="{TOKEN}"\n')
+    result = build_pipeline(str(repo), static_enabled,
+                            provider=DeadProvider(LlamaServerNotFound("x")),
+                            static_only=True).run()
+    assert result.decision == "BLOCK"
+    assert any(f.hard_block for f in result.issues)
+
+
+def test_dry_run_separates_planned_from_not_applicable(repo, static_enabled, monkeypatch):
+    """A tool that cannot run on this change set is never called "planned"."""
+
+    class GoOnlyAnalyzer(FakeStaticAnalyzer):
+        name = "fake-go"
+        languages = ("Go",)
+
+    monkeypatch.setitem(registry.REGISTRY, "fake-go", GoOnlyAnalyzer)
+    static_enabled.static_analysis.tools["fake-go"] = StaticAnalysisToolConfig()
+    _stage(repo, "app.py")
+    plan = build_pipeline(str(repo), static_enabled,
+                          provider=NeverProvider(), dry_run=True).run()
+    assert "planned: fake-static — skipped: fake-go" in plan
+
+
+def test_dry_run_plans_static_analysis_without_running_it(repo, static_enabled,
+                                                          monkeypatch):
+    _stage(repo, "app.py")
+    ran = []
+    monkeypatch.setattr("ai_review.static_analysis.base.run_tool",
+                        lambda *a, **kw: ran.append(a))
+    plan = build_pipeline(str(repo), static_enabled,
+                          provider=NeverProvider(), dry_run=True).run()
+    assert "static analysis (planned: fake-static)" in plan
+    assert "[NOT run in dry-run]" in plan
+    assert ran == []                        # no tool process, no provider call

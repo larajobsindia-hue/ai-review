@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from ai_review.parser import ParseError, parse_llm_json
@@ -121,3 +123,52 @@ def test_single_line_fenced_json_uses_fence_branch():
 def test_tight_fenced_invalid_json_raises():
     with pytest.raises(ParseError, match="no JSON object"):
         parse_llm_json('```json {oops not json}```')
+
+
+STATIC_ANSWER = json.dumps({
+    "decision": "WARN", "summary": "checked",
+    "issues": [{"severity": "HIGH", "category": "SECURITY", "file": "app/x.php",
+                "line": 3, "title": "t", "description": "d", "evidence": "e",
+                "recommendation": "r", "confidence": 0.9, "is_pre_existing": False,
+                "related_static_finding_id": "abc123"}],
+    "static_assessments": [{"finding_id": "abc123", "verdict": "confirmed",
+                             "reason": "reachable"}],
+})
+
+
+def test_parse_static_assessments_and_links():
+    result = parse_llm_json(STATIC_ANSWER)
+    assert result.issues[0].related_static_finding_id == "abc123"
+    assert result.static_assessments[0].finding_id == "abc123"
+    assert result.static_assessments[0].verdict == "confirmed"
+    assert result.static_assessments[0].reason == "reachable"
+
+
+def test_parse_is_backward_compatible_without_static_fields():
+    result = parse_llm_json('{"decision": "PASS", "summary": "ok", "issues": []}')
+    assert result.static_assessments == []
+    assert result.issues == []
+
+
+def test_parse_issue_without_link_leaves_it_empty():
+    result = parse_llm_json(
+        '{"decision": "PASS", "summary": "s", "issues": [{"severity": "LOW",'
+        ' "category": "OTHER", "file": "a.py", "line": 1, "title": "t",'
+        ' "description": "d", "confidence": 0.5}]}')
+    assert result.issues[0].related_static_finding_id is None
+
+
+def test_parse_rejects_unknown_verdict():
+    bad = json.dumps({"decision": "PASS", "summary": "s", "issues": [],
+                      "static_assessments": [{"finding_id": "a", "verdict": "maybe"}]})
+    with pytest.raises(ParseError, match="invalid static verdict"):
+        parse_llm_json(bad)
+
+
+def test_parse_tolerates_malformed_assessments_only_when_absent():
+    # An assessment missing its required finding_id is a schema failure, not a
+    # silently dropped verdict: the corrective retry gets a chance to fix it.
+    bad = json.dumps({"decision": "PASS", "summary": "s", "issues": [],
+                      "static_assessments": [{"verdict": "confirmed"}]})
+    with pytest.raises(ParseError, match="schema validation"):
+        parse_llm_json(bad)
