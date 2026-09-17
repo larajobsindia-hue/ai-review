@@ -1,0 +1,2 @@
+pkg/parse.go:12:2: unreachable code
+pkg/parse.go:31:9: fmt.Sprintf format %s has arg n of wrong type int

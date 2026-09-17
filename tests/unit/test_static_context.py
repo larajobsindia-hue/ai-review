@@ -29,6 +29,7 @@ def test_languages_and_frameworks_and_file_probes(tmp_path):
     profile = RepoProfile(languages=[])
     ctx = build_context(str(tmp_path), AppConfig(), [], profile)
     assert ctx.languages() == set()
+    assert ctx.infrastructure() == set()
     assert ctx.has_file("composer.json") is True
     assert ctx.has_file("missing.json") is False
     assert ctx.has_any(("missing.json", "composer.json")) is True

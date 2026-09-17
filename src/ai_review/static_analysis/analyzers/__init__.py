@@ -8,7 +8,11 @@ from __future__ import annotations
 from importlib import import_module
 
 #: One entry per analyzer module, appended by each phase's tasks.
-MODULES: tuple[str, ...] = ("semgrep", "phpstan")
+MODULES: tuple[str, ...] = (
+    "semgrep", "phpstan", "eslint", "ruff", "staticcheck",
+    "larastan", "typescript", "govet", "sqlfluff", "hadolint", "trivy",
+    "codeql", "sonarqube", "checkov", "tflint", "kubeconform", "kube_linter",
+)
 
 
 def load_all() -> None:

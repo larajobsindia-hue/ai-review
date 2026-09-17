@@ -1,0 +1,10 @@
+[
+  {"code": "S105", "filename": "app/config.py",
+   "location": {"row": 3, "column": 1}, "end_location": {"row": 3, "column": 20},
+   "message": "Possible hardcoded password assigned to: \"API_KEY\"",
+   "noqa_row": 3, "url": "https://docs.astral.sh/ruff/rules/hardcoded-password-string"},
+  {"code": "F821", "filename": "app/main.py",
+   "location": {"row": 9, "column": 12}, "message": "Undefined name `fetch_user`"},
+  {"code": "E501", "filename": "app/main.py",
+   "location": {"row": 40, "column": 89}, "message": "Line too long (100 > 88)"}
+]

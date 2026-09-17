@@ -1,0 +1,10 @@
+[
+  {
+    "filepath": "queries/users.sql",
+    "violations": [
+      {"code": "L003", "line_no": 4, "description": "Expected 1 indent, found 0"},
+      {"code": "LT01", "line_no": 8, "description": "Unnecessary trailing whitespace"},
+      {"code": "PRS", "line_no": 1, "description": "Line is unparsable"}
+    ]
+  }
+]

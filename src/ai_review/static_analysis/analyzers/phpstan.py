@@ -61,6 +61,44 @@ def severity_for(identifier: str | None) -> Severity:
     return DEFAULT_SEVERITY
 
 
+def parse_phpstan_report(stdout: str, ctx: AnalysisContext, *, tool: str) -> list[Finding]:
+    """Decode PHPStan's ``--error-format=json`` payload into findings.
+
+    Larastan emits the same shape, so both analyzers share this parser rather
+    than duplicating the walk. File keys are rebased with ``relative_path`` so
+    an absolute ``files.<abs-path>`` key still matches the pipeline's
+    repo-relative staged paths.
+    """
+    findings: list[Finding] = []
+    for payload in load_json_payload(stdout):
+        files = payload.get("files")
+        if not isinstance(files, dict):
+            continue
+        for path in sorted(files):     # sorted: stable order across runs
+            entry = files[path] or {}
+            for message in entry.get("messages") or []:
+                if isinstance(message, dict):
+                    findings.append(_phpstan_finding(tool, path, message, ctx))
+    return findings
+
+
+def _phpstan_finding(tool: str, path: str, message: dict,
+                     ctx: AnalysisContext) -> Finding:
+    identifier = message.get("identifier")
+    text = str(message.get("message") or identifier or f"{tool} finding")
+    return make_finding(
+        tool=tool,
+        severity=severity_for(identifier),
+        file=relative_path(path, ctx.repo_root),
+        line=message.get("line"),
+        message=text,
+        rule_id=identifier,
+        # No original_severity: PHPStan has no severity vocabulary, and
+        # inventing one would misrepresent the tool (spec §19).
+        evidence=f"identifier: {identifier}" if identifier else "",
+    )
+
+
 @registry.register
 class PhpstanAnalyzer(StaticAnalyzer):
     """``phpstan analyse --error-format=json`` (project scope)."""
@@ -87,29 +125,4 @@ class PhpstanAnalyzer(StaticAnalyzer):
         return [*argv, *targets]
 
     def parse(self, run: ToolRun, ctx: AnalysisContext) -> list[Finding]:
-        findings: list[Finding] = []
-        for payload in load_json_payload(run.stdout):
-            files = payload.get("files")
-            if not isinstance(files, dict):
-                continue
-            for path in sorted(files):     # sorted: stable order across runs
-                entry = files[path] or {}
-                for message in entry.get("messages") or []:
-                    if isinstance(message, dict):
-                        findings.append(self._finding(path, message, ctx))
-        return findings
-
-    def _finding(self, path: str, message: dict, ctx: AnalysisContext) -> Finding:
-        identifier = message.get("identifier")
-        text = str(message.get("message") or identifier or "phpstan finding")
-        return make_finding(
-            tool=self.name,
-            severity=severity_for(identifier),
-            file=relative_path(path, ctx.repo_root),
-            line=message.get("line"),
-            message=text,
-            rule_id=identifier,
-            # No original_severity: PHPStan has no severity vocabulary, and
-            # inventing one would misrepresent the tool (spec §19).
-            evidence=f"identifier: {identifier}" if identifier else "",
-        )
+        return parse_phpstan_report(run.stdout, ctx, tool=self.name)

@@ -1,0 +1,15 @@
+[
+  {
+    "filePath": "src/app.ts",
+    "messages": [
+      {"ruleId": "security/detect-eval-with-expression", "severity": 2, "line": 12,
+       "column": 5, "message": "eval with a variable is dangerous."},
+      {"ruleId": "no-unused-vars", "severity": 1, "line": 20, "column": 7,
+       "message": "'x' is defined but never used."},
+      {"ruleId": null, "severity": 2, "line": 3, "column": 1,
+       "message": "Parsing error: Unexpected token"}
+    ],
+    "errorCount": 2,
+    "warningCount": 1
+  }
+]

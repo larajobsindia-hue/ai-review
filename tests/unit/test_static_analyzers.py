@@ -22,7 +22,8 @@ def _fixture(name):
     return (FIXTURES / name).read_text(encoding="utf-8")
 
 
-def _ctx(tmp_path, files, changes=None, languages=("Python",), frameworks=()):
+def _ctx(tmp_path, files, changes=None, languages=("Python",), frameworks=(),
+         infrastructure=()):
     for name, body in files.items():
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -30,8 +31,11 @@ def _ctx(tmp_path, files, changes=None, languages=("Python",), frameworks=()):
     cfg = AppConfig()
     cfg.static_analysis.tools = {name: StaticAnalysisToolConfig()
                                  for name in registry.REGISTRY}
-    profile = RepoProfile(languages=[ProfileEntry(lang, 0.9, []) for lang in languages],
-                          frameworks=[ProfileEntry(fw, 0.9, []) for fw in frameworks])
+    profile = RepoProfile(
+        languages=[ProfileEntry(lang, 0.9, []) for lang in languages],
+        frameworks=[ProfileEntry(fw, 0.9, []) for fw in frameworks],
+        infrastructure=[ProfileEntry(name, 0.9, []) for name in infrastructure],
+    )
     staged = changes if changes is not None else [
         StagedChange(path=name, status="modified") for name in files]
     return build_context(str(tmp_path), cfg, staged, profile)
@@ -41,10 +45,10 @@ def _analyzer(name):
     return registry.REGISTRY[name]()
 
 
-def _run(analyzer, ctx, stdout="", exit_code=0):
+def _run(analyzer, ctx, stdout="", stderr="", exit_code=0):
     from ai_review.static_analysis.runner import ToolRun
     return analyzer.parse(ToolRun(argv=["x"], status="run", exit_code=exit_code,
-                                  stdout=stdout), ctx)
+                                  stdout=stdout, stderr=stderr), ctx)
 
 
 def _executable(tmp_path, rel):
@@ -59,9 +63,15 @@ def _executable(tmp_path, rel):
 # -- registry -------------------------------------------------------------------
 
 
-def test_both_priority_one_analyzers_are_registered():
-    assert registry.REGISTRY["semgrep"].name == "semgrep"
-    assert registry.REGISTRY["phpstan"].name == "phpstan"
+def test_all_planned_analyzers_are_registered():
+    from ai_review.static_analysis.analyzers import MODULES
+    assert MODULES == (
+        "semgrep", "phpstan", "eslint", "ruff", "staticcheck",
+        "larastan", "typescript", "govet", "sqlfluff", "hadolint", "trivy",
+        "codeql", "sonarqube", "checkov", "tflint", "kubeconform", "kube_linter",
+    )
+    for name in MODULES:
+        assert registry.REGISTRY[name].name == name
 
 
 # -- semgrep --------------------------------------------------------------------
@@ -288,3 +298,305 @@ def test_phpstan_not_installed_is_unavailable_not_failed(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path, {"app/Services/OrderService.php": "<?php\n"}, languages=("PHP",))
     result = _analyzer("phpstan").analyze(ctx)
     assert result.status == "unavailable" and result.findings == []
+
+
+# -- eslint ---------------------------------------------------------------------
+
+ESLINT = _fixture("eslint.json")
+
+
+def test_eslint_prefers_the_local_binary(tmp_path, monkeypatch):
+    _executable(tmp_path, "node_modules/.bin/eslint")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/eslint")
+    ctx = _ctx(tmp_path, {"src/app.ts": "let x = 1\n"}, languages=("TypeScript",))
+    assert _analyzer("eslint").resolve(ctx) == str(tmp_path / "node_modules/.bin/eslint")
+    assert _analyzer("eslint").local_paths == ("node_modules/.bin/eslint",)
+
+
+def test_eslint_argv_pins_json_flags_and_targets(tmp_path):
+    ctx = _ctx(tmp_path, {"src/app.ts": "let x = 1\n"}, languages=("TypeScript",))
+    assert _analyzer("eslint").build_argv("/exe", ctx) == [
+        "/exe", "--format", "json", "--no-color", "--no-error-on-unmatched-pattern",
+        "src/app.ts"]
+    assert _analyzer("eslint").ok_exit_codes == (0, 1)
+
+
+def test_eslint_parses_security_warning_and_fatal(tmp_path):
+    ctx = _ctx(tmp_path, {"src/app.ts": "let x = 1\n"}, languages=("TypeScript",))
+    findings = _run(_analyzer("eslint"), ctx, stdout=ESLINT)
+    by_rule = {f.rule_id: f for f in findings}
+    security = by_rule["security/detect-eval-with-expression"]
+    assert (security.severity, security.category) == ("HIGH", "SECURITY")
+    assert security.file == "src/app.ts" and security.line == 12
+    assert security.original_severity == "2"
+    unused = by_rule["no-unused-vars"]
+    assert unused.severity == "LOW" and unused.line == 20
+    fatal = by_rule[None]
+    assert fatal.severity == "MEDIUM" and "Parsing error" in fatal.original_message
+
+
+def test_eslint_empty_output_is_a_clean_run(tmp_path):
+    ctx = _ctx(tmp_path, {"src/app.ts": "let x = 1\n"}, languages=("TypeScript",))
+    assert _run(_analyzer("eslint"), ctx, stdout="") == []
+
+
+# -- ruff -----------------------------------------------------------------------
+
+RUFF = _fixture("ruff.json")
+
+
+def test_ruff_argv_pins_json_and_python_targets(tmp_path):
+    ctx = _ctx(tmp_path, {"app/main.py": "x = 1\n", "app/types.pyi": "x: int\n"})
+    argv = _analyzer("ruff").build_argv("/exe", ctx)
+    assert argv[:6] == ["/exe", "check", "--output-format", "json", "--no-cache", "--quiet"]
+    assert argv[-2:] == ["app/main.py", "app/types.pyi"]
+    assert _analyzer("ruff").ok_exit_codes == (0, 1)
+
+
+def test_ruff_parses_security_undefined_and_unknown_codes(tmp_path):
+    ctx = _ctx(tmp_path, {"app/config.py": "x = 1\n", "app/main.py": "x = 1\n"})
+    findings = _run(_analyzer("ruff"), ctx, stdout=RUFF)
+    by_rule = {f.rule_id: f for f in findings}
+    assert (by_rule["S105"].severity, by_rule["S105"].category) == ("HIGH", "SECURITY")
+    assert by_rule["S105"].file == "app/config.py" and by_rule["S105"].line == 3
+    assert (by_rule["F821"].severity, by_rule["F821"].category) == ("HIGH", "BUG")
+    assert by_rule["E501"].severity == "LOW"
+    assert _run(_analyzer("ruff"), ctx, stdout="") == []
+
+
+# -- staticcheck ----------------------------------------------------------------
+
+STATICCHECK = _fixture("staticcheck.ndjson")
+
+
+def test_staticcheck_requires_go_mod_and_is_project_scope(tmp_path):
+    analyzer = _analyzer("staticcheck")
+    assert analyzer.languages == ("Go",)
+    assert analyzer.scope == "project"
+    assert analyzer.ok_exit_codes == (0, 1)
+    without = _ctx(tmp_path, {"pkg/parse.go": "package p\n"}, languages=("Go",))
+    assert analyzer.build_argv("/exe", without) == []
+    with_mod = _ctx(tmp_path, {"go.mod": "module x\n", "pkg/parse.go": "package p\n"},
+                    languages=("Go",))
+    assert analyzer.build_argv("/exe", with_mod) == ["/exe", "-f", "json", "./..."]
+
+
+def test_staticcheck_parses_ndjson_severity_and_st1_category(tmp_path):
+    ctx = _ctx(tmp_path, {"go.mod": "module x\n", "pkg/parse.go": "package p\n"},
+               languages=("Go",))
+    findings = _run(_analyzer("staticcheck"), ctx, stdout=STATICCHECK)
+    assert len(findings) == 2
+    by_rule = {f.rule_id: f for f in findings}
+    assert by_rule["SA1000"].severity == "HIGH" and by_rule["SA1000"].line == 31
+    assert by_rule["SA1000"].file == "pkg/parse.go"
+    assert by_rule["ST1005"].severity == "MEDIUM"
+    assert by_rule["ST1005"].category == "MAINTAINABILITY"
+
+
+# -- larastan -------------------------------------------------------------------
+
+
+def test_larastan_gates_on_laravel_and_reuses_phpstan_parser(tmp_path):
+    analyzer = _analyzer("larastan")
+    assert analyzer.frameworks == ("Laravel",)
+    assert analyzer.local_paths == ("vendor/bin/larastan",)
+    php = _ctx(tmp_path, {"app/Services/OrderService.php": "<?php\n"}, languages=("PHP",))
+    laravel = _ctx(tmp_path, {"app/Services/OrderService.php": "<?php\n"},
+                   languages=("PHP",), frameworks=("Laravel",))
+    assert not analyzer.supports(php)
+    assert analyzer.supports(laravel)
+    assert analyzer.build_argv("/exe", laravel) == [
+        "/exe", "analyse", "--error-format=json", "--no-progress"]
+    findings = _run(analyzer, laravel, stdout=PHPSTAN)
+    assert {f.rule_id for f in findings} == {
+        "argument.type", "method.notFound", "missingType.return", None}
+    assert all(f.tool == "larastan" for f in findings)
+
+
+# -- typescript -----------------------------------------------------------------
+
+TYPESCRIPT = _fixture("typescript.txt")
+
+
+def test_typescript_requires_tsconfig_and_never_emits(tmp_path):
+    analyzer = _analyzer("typescript")
+    assert analyzer.languages == ("TypeScript",)
+    assert analyzer.local_paths == ("node_modules/.bin/tsc",)
+    assert analyzer.ok_exit_codes == (0, 1, 2)
+    without = _ctx(tmp_path, {"src/app.ts": "let x = 1\n"}, languages=("TypeScript",))
+    assert analyzer.build_argv("/exe", without) == []
+    with_cfg = _ctx(tmp_path, {"tsconfig.json": "{}\n", "src/app.ts": "let x = 1\n"},
+                    languages=("TypeScript",))
+    assert analyzer.build_argv("/exe", with_cfg) == ["/exe", "--noEmit", "--pretty", "false"]
+
+
+def test_typescript_parses_pretty_false_diagnostics(tmp_path):
+    ctx = _ctx(tmp_path, {"tsconfig.json": "{}\n", "src/app.ts": "let x = 1\n"},
+               languages=("TypeScript",))
+    findings = _run(_analyzer("typescript"), ctx, stdout=TYPESCRIPT)
+    by_rule = {f.rule_id: f for f in findings}
+    assert by_rule["TS2322"].severity == "HIGH" and by_rule["TS2322"].line == 12
+    assert by_rule["TS2322"].file == "src/app.ts"
+    assert by_rule["TS6046"].severity == "LOW"
+    assert by_rule["TS1005"].severity == "HIGH"
+
+
+# -- govet ----------------------------------------------------------------------
+
+GOVET = _fixture("govet.txt")
+
+
+def test_govet_requires_go_mod_and_parses_stderr_text(tmp_path):
+    analyzer = _analyzer("govet")
+    assert analyzer.languages == ("Go",)
+    assert analyzer.scope == "project"
+    assert analyzer.ok_exit_codes == (0, 1)
+    without = _ctx(tmp_path, {"pkg/parse.go": "package p\n"}, languages=("Go",))
+    assert analyzer.build_argv("/usr/bin/go", without) == []
+    with_mod = _ctx(tmp_path, {"go.mod": "module x\n", "pkg/parse.go": "package p\n"},
+                    languages=("Go",))
+    assert analyzer.build_argv("/usr/bin/go", with_mod) == ["/usr/bin/go", "vet", "./..."]
+    findings = _run(analyzer, with_mod, stderr=GOVET)
+    assert [f.severity for f in findings] == ["MEDIUM", "MEDIUM"]
+    assert findings[0].file == "pkg/parse.go" and findings[0].line == 12
+    assert "unreachable" in findings[0].original_message
+
+
+# -- sqlfluff -------------------------------------------------------------------
+
+SQLFLUFF = _fixture("sqlfluff.json")
+
+
+def test_sqlfluff_only_targets_sql_and_maps_prefixes(tmp_path):
+    analyzer = _analyzer("sqlfluff")
+    assert analyzer.languages == ("SQL",)
+    assert analyzer.extensions == (".sql",)
+    ctx = _ctx(tmp_path, {"queries/users.sql": "SELECT 1;\n"}, languages=("SQL",))
+    assert analyzer.build_argv("/exe", ctx) == [
+        "/exe", "lint", "--format", "json", "queries/users.sql"]
+    findings = _run(analyzer, ctx, stdout=SQLFLUFF)
+    by_rule = {f.rule_id: f for f in findings}
+    assert by_rule["L003"].severity == "MEDIUM"
+    assert by_rule["LT01"].severity == "LOW"
+    assert by_rule["PRS"].severity == "MEDIUM"
+    assert by_rule["L003"].file == "queries/users.sql"
+
+
+# -- hadolint -------------------------------------------------------------------
+
+HADOLINT = _fixture("hadolint.json")
+
+
+def test_hadolint_only_targets_dockerfiles(tmp_path):
+    analyzer = _analyzer("hadolint")
+    docker = _ctx(tmp_path, {"Dockerfile": "FROM alpine\n"}, infrastructure=("Docker",))
+    other = _ctx(tmp_path, {"app/util.py": "x = 1\n"}, infrastructure=("Docker",))
+    assert analyzer.supports(docker)
+    assert not analyzer.supports(other)
+    assert analyzer.build_argv("/exe", docker) == ["/exe", "--format", "json", "Dockerfile"]
+    findings = _run(analyzer, docker, stdout=HADOLINT)
+    by_rule = {f.rule_id: f for f in findings}
+    assert by_rule["DL3008"].severity == "MEDIUM"
+    assert by_rule["DL3002"].severity == "HIGH"
+    assert by_rule["DL3006"].severity == "LOW"
+
+
+# -- trivy ----------------------------------------------------------------------
+
+TRIVY = _fixture("trivy.json")
+
+
+def test_trivy_never_downloads_a_database(tmp_path):
+    analyzer = _analyzer("trivy")
+    ctx = _ctx(tmp_path, {"Dockerfile": "FROM alpine\n"}, infrastructure=("Docker",))
+    argv = analyzer.build_argv("/exe", ctx)
+    assert argv == ["/exe", "config", "--format", "json", "--scanners", "misconfig",
+                    "--skip-db-update", "."]
+    assert "--skip-db-update" in argv
+    findings = _run(analyzer, ctx, stdout=TRIVY)
+    by_rule = {f.rule_id: f for f in findings}
+    assert by_rule["DS002"].severity == "HIGH" and by_rule["DS002"].line == 10
+    assert by_rule["DS026"].severity == "LOW"
+
+
+# -- codeql / sonarqube ---------------------------------------------------------
+
+
+def test_codeql_never_runs_without_a_database(tmp_path, monkeypatch):
+    analyzer = _analyzer("codeql")
+    ctx = _ctx(tmp_path, {"app/util.py": "x = 1\n"})
+    monkeypatch.setattr(analyzer, "resolve", lambda ctx: "/bin/true")
+    result = analyzer.analyze(ctx)
+    assert result.status == "skipped" and result.findings == []
+    assert "database" in result.error
+    assert analyzer.build_argv("/exe", ctx) == []
+
+
+def test_sonarqube_never_contacts_a_server(tmp_path, monkeypatch):
+    analyzer = _analyzer("sonarqube")
+    ctx = _ctx(tmp_path, {"app/util.py": "x = 1\n"})
+    monkeypatch.setattr(analyzer, "resolve", lambda ctx: "/bin/true")
+    result = analyzer.analyze(ctx)
+    assert result.status == "skipped" and result.findings == []
+    assert "server" in result.error
+
+
+# -- checkov / tflint / kubeconform / kube-linter -------------------------------
+
+CHECKOV = _fixture("checkov.json")
+TFLINT = _fixture("tflint.json")
+KUBECONFORM = _fixture("kubeconform.json")
+KUBE_LINTER = _fixture("kube_linter.json")
+
+
+def test_checkov_gates_on_terraform_or_kubernetes(tmp_path):
+    analyzer = _analyzer("checkov")
+    python = _ctx(tmp_path, {"app/util.py": "x = 1\n"})
+    tf = _ctx(tmp_path, {"infra/s3.tf": "resource \"aws_s3_bucket\" \"b\" {}\n"},
+              languages=(), infrastructure=("Terraform",))
+    assert not analyzer.supports(python)
+    assert analyzer.supports(tf)
+    assert analyzer.build_argv("/exe", tf) == ["/exe", "-d", ".", "-o", "json", "--compact"]
+    findings = _run(analyzer, tf, stdout=CHECKOV)
+    by_rule = {f.rule_id: f for f in findings}
+    assert by_rule["CKV_AWS_20"].severity == "HIGH"
+    assert by_rule["CKV_AWS_20"].file == "infra/s3.tf"
+    assert by_rule["CKV_K8S_21"].severity == "LOW"
+
+
+def test_tflint_parses_issues_and_requires_terraform(tmp_path):
+    analyzer = _analyzer("tflint")
+    ctx = _ctx(tmp_path, {"main.tf": "resource \"aws_instance\" \"x\" {}\n"},
+               languages=(), infrastructure=("Terraform",))
+    assert analyzer.build_argv("/exe", ctx) == ["/exe", "--format", "json"]
+    findings = _run(analyzer, ctx, stdout=TFLINT)
+    by_rule = {f.rule_id: f for f in findings}
+    assert by_rule["aws_instance_invalid_type"].severity == "HIGH"
+    assert by_rule["aws_instance_invalid_type"].line == 8
+    assert by_rule["terraform_naming_convention"].severity == "MEDIUM"
+
+
+def test_kubeconform_skips_valid_resources(tmp_path):
+    analyzer = _analyzer("kubeconform")
+    ctx = _ctx(tmp_path, {"k8s/deployment.yaml": "apiVersion: apps/v1\n",
+                          "k8s/service.yaml": "apiVersion: v1\n"},
+               languages=(), infrastructure=("Kubernetes",))
+    assert analyzer.build_argv("/exe", ctx) == [
+        "/exe", "-output", "json", "k8s/deployment.yaml", "k8s/service.yaml"]
+    findings = _run(analyzer, ctx, stdout=KUBECONFORM)
+    assert len(findings) == 1
+    assert findings[0].file == "k8s/deployment.yaml"
+    assert findings[0].severity == "HIGH"
+    assert "containrs" in findings[0].original_message
+
+
+def test_kube_linter_parses_reports(tmp_path):
+    analyzer = _analyzer("kube_linter")
+    ctx = _ctx(tmp_path, {"k8s/deployment.yaml": "apiVersion: apps/v1\n"},
+               languages=(), infrastructure=("Kubernetes",))
+    assert analyzer.build_argv("/exe", ctx) == [
+        "/exe", "lint", "--format", "json", "k8s/deployment.yaml"]
+    findings = _run(analyzer, ctx, stdout=KUBE_LINTER)
+    assert [f.rule_id for f in findings] == ["no-read-only-root-fs", "unset-cpu-requirements"]
+    assert all(f.file == "k8s/deployment.yaml" for f in findings)
+    assert all(f.severity == "MEDIUM" for f in findings)

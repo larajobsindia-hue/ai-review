@@ -46,6 +46,8 @@ class StaticAnalyzer(ABC):
     #: Technology gates; empty means "any technology".
     languages: tuple[str, ...] = ()
     frameworks: tuple[str, ...] = ()
+    #: Infrastructure gates (Docker, Terraform, Kubernetes); empty means "any".
+    infrastructure: tuple[str, ...] = ()
     #: File extensions consumed in changed_files scope; empty means "any".
     extensions: tuple[str, ...] = ()
     scope: str = SCOPE_CHANGED_FILES
@@ -64,6 +66,8 @@ class StaticAnalyzer(ABC):
         if self.languages and not ctx.languages().intersection(self.languages):
             return False
         if self.frameworks and not ctx.frameworks().intersection(self.frameworks):
+            return False
+        if self.infrastructure and not ctx.infrastructure().intersection(self.infrastructure):
             return False
         if self.scope == SCOPE_CHANGED_FILES and self.extensions and not \
                 ctx.changed_paths(self.extensions):

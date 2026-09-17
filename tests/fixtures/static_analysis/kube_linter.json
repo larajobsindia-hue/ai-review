@@ -1,0 +1,22 @@
+{
+  "Reports": [
+    {
+      "Check": "no-read-only-root-fs",
+      "Diagnostic": {
+        "Message": "container has a writable root filesystem"
+      },
+      "Object": {
+        "Metadata": {"FilePath": "k8s/deployment.yaml"}
+      }
+    },
+    {
+      "Check": "unset-cpu-requirements",
+      "Diagnostic": {
+        "Message": "container has no CPU request or limit"
+      },
+      "Object": {
+        "Metadata": {"FilePath": "k8s/deployment.yaml"}
+      }
+    }
+  ]
+}
