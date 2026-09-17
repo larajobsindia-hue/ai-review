@@ -2,9 +2,10 @@
 
 Run sequence: collect staged -> detect (scoped profile via ``profile_from_names``)
 -> classify -> diff text -> redact -> context placeholder -> scan_staged
-security findings -> [dry-run short-circuit: provider never touched] -> build
-prompt (assets anchored inside the shipped ``ai_review.prompts`` package) ->
-``ReviewSession.run`` -> merge security findings (prepend) ->
+security findings -> resolution gate (missing imports / unresolved references,
+provider-independent) -> [dry-run short-circuit: provider never touched] ->
+build prompt (assets anchored inside the shipped ``ai_review.prompts`` package)
+-> ``ReviewSession.run`` -> merge security + resolution findings (prepend) ->
 ``validate_findings`` -> ``PolicyEngine.decide``.
 
 Type duality: :meth:`Pipeline.run` returns a :class:`~ai_review.models.ReviewResult`
@@ -29,6 +30,7 @@ from ai_review.policy import FailureDecision, PolicyEngine
 from ai_review.profile import profile_from_names
 from ai_review.prompts import PromptBuilder, default_prompt_dir
 from ai_review.providers.base import LlamaServerNotFound, ProviderError
+from ai_review.resolution import scan_unresolved
 from ai_review.reviewer import ReviewSession
 from ai_review.security import redact_text, scan_staged
 from ai_review.validator import validate_findings
@@ -103,8 +105,8 @@ class Pipeline:
         Returns a :class:`~ai_review.models.ReviewResult` normally; the dry-run
         plan text (``str``) when built with ``dry_run=True`` (provider untouched).
         """
-        (meta, secret_kinds, security_findings, profile, changes, redacted,
-         ) = self._prepare()
+        (meta, secret_kinds, security_findings, resolution_findings, profile,
+         changes, redacted) = self._prepare()
 
         if self.opts.dry_run:
             self.opts.meta = meta
@@ -132,7 +134,7 @@ class Pipeline:
             result = FailureDecision().apply(
                 cfg.failure_policy.on_llm_unavailable, message)
 
-        result.issues = security_findings + result.issues
+        result.issues = security_findings + resolution_findings + result.issues
         result = validate_findings(result, changes)
         gated = PolicyEngine(cfg.policy).decide(result)
 
@@ -142,8 +144,8 @@ class Pipeline:
             # "PASS / No issues found.", contradicting FailureDecision's
             # contract (never claim the AI review passed). The failure_policy
             # outcome therefore stands — unless the gate BLOCKs on real,
-            # validated findings: offline + a staged secret still blocks via
-            # hard_block. NOTE: validate_findings also transiently downgrades
+            # validated findings: offline + a staged secret (or an unresolved
+            # reference) still blocks via hard_block. NOTE: validate_findings also transiently downgrades
             # a failure-BLOCK to WARN (no CRITICAL/HIGH findings); this rescue
             # is what restores it — do not reorder run() without preserving it.
             outcome = FailureDecision().apply(
@@ -167,8 +169,8 @@ class Pipeline:
     def _prepare(self):
         """Run every offline stage; the provider is never touched here.
 
-        Returns ``(meta, secret_kinds, security_findings, profile, changes,
-        redacted_diff)``.
+        Returns ``(meta, secret_kinds, security_findings, resolution_findings,
+        profile, changes, redacted_diff)``.
         """
         self._last_diff_text = None  # per-run cache; collect() fetches once
         root, changes = self.collect()
@@ -184,6 +186,13 @@ class Pipeline:
         else:
             redacted, secret_kinds = diff_text, []
         security_findings = scan_staged(root, changes, cfg.security.excluded_files)
+        # Unresolved references (a missing import) are decided offline and
+        # hard-block: the provider's verdict must never be able to pass code
+        # that cannot resolve as written.
+        resolution_findings = scan_unresolved(
+            root, changes, ignore=cfg.generated.ignore,
+            allowlist=cfg.resolution.allowlist, severity=cfg.resolution.severity,
+        ) if cfg.resolution.enabled else []
 
         meta = self.commit_meta(root)
         meta.update({
@@ -195,7 +204,8 @@ class Pipeline:
             "duration_s": None,
         })
         self._last_diff_text = diff_text
-        return meta, secret_kinds, security_findings, profile, changes, redacted
+        return (meta, secret_kinds, security_findings, resolution_findings,
+                profile, changes, redacted)
 
     def _diff_text(self, root: str) -> str:
         """The staged unified diff, fetched once per run and reused."""
@@ -208,6 +218,7 @@ class Pipeline:
         payload = builder.build(
             profile=profile, changes=changes, diff_text=redacted,
             context_text=self._context_text(changes),
+            max_diff_chars=self.opts.cfg.review.max_diff_kb * 1024,
         )
         session = self.session_factory()
         self.last_session = session
@@ -235,9 +246,10 @@ class Pipeline:
             "  3. classify files -> review depth",
             f"  4. redact secrets ({redaction})",
             "  5. secret scan",
-            "  6. build layered prompt",
-            "  7. call LLM via configured provider  [SKIPPED in dry-run]",
-            "  8. parse + validate findings",
-            "  9. policy decision",
+            "  6. resolution gate (unresolved references / missing imports)",
+            "  7. build layered prompt",
+            "  8. call LLM via configured provider  [SKIPPED in dry-run]",
+            "  9. parse + validate findings",
+            " 10. policy decision",
         ]
         return "\n".join(lines)

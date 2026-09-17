@@ -14,7 +14,13 @@ Do not report:
 Every finding must be supported by evidence in the supplied code.
 
 Consider: correctness, security, reliability, performance, data integrity,
-concurrency, compatibility, maintainability, testing.
+concurrency, compatibility, maintainability, testing, and reference
+resolution (missing imports, undefined or unimported symbols, unresolvable
+namespaces).
+
+Never assume a name resolves. If an added line references a symbol whose import
+or definition is not visible in the supplied code, that is a finding, not a
+detail to skip.
 
 If you are uncertain, reduce your confidence.
 

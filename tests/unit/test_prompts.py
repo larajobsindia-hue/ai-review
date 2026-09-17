@@ -7,6 +7,7 @@ from ai_review.prompts import (
     MAX_DIFF_CHARS,
     OUTPUT_JSON_SCHEMA,
     PromptBuilder,
+    _truncate_diff,
     format_diff,
     prompt_files_ok,
     prompt_version,
@@ -228,3 +229,35 @@ def test_build_payload_supports_corrective_retry_transport(prompt_dir):
     assert corrective.corrective is True
     assert corrective.user == payload.user
     assert corrective.json_schema == payload.json_schema
+
+def test_build_enforces_diff_budget(prompt_dir):
+    builder = PromptBuilder(str(prompt_dir))
+    big = "y" * 5_000
+    payload = builder.build(
+        profile=_go_profile(), changes=[], diff_text=big,
+        context_text="", max_diff_chars=1_000,
+    )
+    assert "y" * 1_000 in payload.user
+    assert "y" * 1_001 not in payload.user
+    assert "…[truncated 4000 chars]" in payload.user
+    assert "REVIEW PARTIAL" in payload.user
+
+
+def test_build_no_partial_notice_when_under_budget(prompt_dir):
+    builder = PromptBuilder(str(prompt_dir))
+    payload = builder.build(
+        profile=_go_profile(), changes=[], diff_text="short",
+        context_text="", max_diff_chars=1_000,
+    )
+    assert "REVIEW PARTIAL" not in payload.user
+    assert "short" in payload.user
+
+
+def test_truncate_diff_budget_zero_elides_everything():
+    body, removed = _truncate_diff("abcdef", 0)
+    assert removed == 6
+    assert body.startswith("\n…[truncated 6 chars]")
+
+
+def test_truncate_diff_negative_budget_is_noop():
+    assert _truncate_diff("abc", -1) == ("abc", 0)

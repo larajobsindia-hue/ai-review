@@ -23,7 +23,18 @@ security:
   redact_secrets: true
   excluded_files: [".env", "*.pem", "*.key", "*.p12"]
 
-# Which findings block the commit.
+# Deterministic unresolved-reference gate: a symbol added to a file without
+# the import that binds it (``User::all()`` with no ``use App\Models\User;``)
+# blocks the commit in any language, without calling the LLM. Only symbols
+# defined somewhere in the repository are judged, so framework global aliases
+# are never mistaken for missing imports.
+resolution:
+  enabled: true
+  severity: HIGH              # CRITICAL | HIGH | MEDIUM | LOW | INFO
+  allowlist: []               # project globals the gate must never question
+
+# Which findings block the commit. NOTE: the resolution gate is hard-blocking
+# and is not subject to these thresholds.
 policy:
   block_on: [CRITICAL, HIGH]
   minimum_confidence_to_block: 0.80

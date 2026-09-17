@@ -83,6 +83,10 @@ a fully commented example.
   before enabling.
 - Secret scanning is offline and deterministic: hard-coded secrets are
   detected and block the commit even if no LLM is running.
+- The unresolved-reference gate is offline and deterministic too: a symbol
+  added without the import that binds it blocks the commit in any language,
+  regardless of what the model answered (see `resolution:` in
+  [`examples/.ai-review.example.yaml`](examples/.ai-review.example.yaml)).
 - `git commit --no-verify` is never modified by this tool.
 
 ## License

@@ -12,6 +12,10 @@ security:
     - "*.pem"
     - "*.key"
     - "*.p12"
+resolution:
+  enabled: true
+  severity: HIGH
+  allowlist: []
 policy:
   block_on: [CRITICAL, HIGH]
   minimum_confidence_to_block: 0.80

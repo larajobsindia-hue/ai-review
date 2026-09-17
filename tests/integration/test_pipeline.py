@@ -316,6 +316,86 @@ def test_progress_callback_fires_before_llm_call(repo):
     assert "timeout_seconds" in seen[0]
 
 
+# --- deterministic resolution gate (missing imports) ------------------------------
+
+WEB_PHP = """<?php
+
+use Illuminate\\Support\\Facades\\Route;
+
+Route::get('/', function () {
+    $user = User::all();
+    return view('welcome');
+});
+"""
+
+USER_PHP = """<?php
+
+namespace App\\Models;
+
+class User
+{
+    protected $table = 'users';
+}
+"""
+
+
+def _laravel_repo(repo, route_body=WEB_PHP):
+    (repo / "composer.json").write_text('{"require": {"laravel/framework": "^10"}}')
+    (repo / "app" / "Models").mkdir(parents=True)
+    (repo / "app" / "Models" / "User.php").write_text(USER_PHP)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    (repo / "routes").mkdir()
+    (repo / "routes" / "web.php").write_text(route_body)
+    _git(repo, "add", "routes/web.php")
+
+
+def test_missing_import_blocks_a_passing_llm(repo):
+    _laravel_repo(repo)
+    pipe = build_pipeline(str(repo), AppConfig(), provider=StaticProvider([GOOD]))
+    result = pipe.run()
+    assert result.decision == "BLOCK"
+    unresolved = [f for f in result.issues if f.title == "Unresolved reference: User"]
+    assert len(unresolved) == 1
+    assert unresolved[0].hard_block is True
+    assert unresolved[0].severity == "HIGH"
+    assert "use App\\Models\\User;" in unresolved[0].recommendation
+
+
+def test_missing_import_blocks_with_llm_unavailable(repo):
+    _laravel_repo(repo)
+    pipe = build_pipeline(str(repo), AppConfig(),
+                          provider=DeadProvider(LlamaServerNotFound("down")))
+    result = pipe.run()
+    assert result.decision == "BLOCK"
+
+
+def test_imported_model_passes(repo):
+    _laravel_repo(repo, route_body=WEB_PHP.replace(
+        "use Illuminate\\Support\\Facades\\Route;",
+        "use App\\Models\\User;\nuse Illuminate\\Support\\Facades\\Route;",
+    ))
+    result = build_pipeline(str(repo), AppConfig(),
+                            provider=StaticProvider([GOOD])).run()
+    assert result.decision == "PASS"
+    assert result.issues == []
+
+
+def test_resolution_gate_can_be_disabled(repo):
+    _laravel_repo(repo)
+    cfg = AppConfig()
+    cfg.resolution.enabled = False
+    result = build_pipeline(str(repo), cfg, provider=StaticProvider([GOOD])).run()
+    assert result.decision == "PASS"
+
+
+def test_dry_run_plan_lists_resolution_gate(repo):
+    _laravel_repo(repo)
+    plan = build_pipeline(str(repo), AppConfig(), provider=NeverProvider(),
+                          dry_run=True).run()
+    assert "resolution gate" in plan
+
+
 def test_progress_not_called_on_dry_run(repo):
     (repo / "main.go").write_text("package main\n")
     _git(repo, "add", "-A")

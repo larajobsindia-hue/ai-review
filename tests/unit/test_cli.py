@@ -84,6 +84,41 @@ def test_block_exit_one_offline_plus_secret(repo, failing_provider):
     assert main(["--staged"]) == EXIT_BLOCK
 
 
+USER_PHP = "<?php\n\nnamespace App\\Models;\n\nclass User\n{\n    protected $table = 'users';\n}\n"
+
+WEB_PHP = """<?php
+
+use Illuminate\\Support\\Facades\\Route;
+
+Route::get('/', function () {
+    $user = User::all();
+    return view('welcome');
+});
+"""
+
+
+def test_missing_import_blocks_the_commit(repo, failing_provider, capsys):
+    """End-to-end: the LLM is unreachable, yet the commit must not pass."""
+    _stage(repo, "app/Models/User.php", USER_PHP)
+    _stage(repo, "routes/web.php", WEB_PHP)
+    rc = main(["--staged"])
+    out = capsys.readouterr().out
+    assert rc == EXIT_BLOCK
+    assert "Unresolved reference: User" in out
+    assert "use App\\Models\\User;" in out
+
+
+def test_imported_model_does_not_block(repo, failing_provider, capsys):
+    _stage(repo, "app/Models/User.php", USER_PHP)
+    _stage(repo, "routes/web.php", WEB_PHP.replace(
+        "use Illuminate\\Support\\Facades\\Route;",
+        "use App\\Models\\User;\nuse Illuminate\\Support\\Facades\\Route;",
+    ))
+    rc = main(["--staged"])
+    assert rc == EXIT_OK
+    assert "Unresolved reference" not in capsys.readouterr().out
+
+
 def test_verbose_reports_findings_on_block(repo, failing_provider, capsys):
     _stage(repo, "creds.py", 'token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"\n')
     rc = main(["--staged", "--verbose"])

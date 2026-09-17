@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -51,6 +51,21 @@ class SecurityConfig(BaseModel):
 class PolicyConfig(BaseModel):
     block_on: list[str] = Field(default_factory=lambda: ["CRITICAL", "HIGH"])
     minimum_confidence_to_block: float = 0.80
+
+
+class ResolutionConfig(BaseModel):
+    """Deterministic unresolved-reference gate (missing imports never pass).
+
+    Severity is the only tuning knob for how loud a finding is; the finding is
+    always hard-blocking, so a missing import cannot be waved through by a
+    provider answer or a policy threshold. ``allowlist`` names project globals
+    (same-named helpers reached through a framework alias) the gate must never
+    question; ``enabled: false`` disables the gate entirely.
+    """
+
+    enabled: bool = True
+    severity: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] = "HIGH"
+    allowlist: list[str] = Field(default_factory=list)
 
 
 class FailurePolicyConfig(BaseModel):
@@ -102,6 +117,7 @@ class OrganizationConfig(BaseModel):
 class AppConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     security: SecurityConfig = SecurityConfig()
+    resolution: ResolutionConfig = ResolutionConfig()
     policy: PolicyConfig = PolicyConfig()
     failure_policy: FailurePolicyConfig = FailurePolicyConfig()
     checks: ChecksConfig = ChecksConfig()

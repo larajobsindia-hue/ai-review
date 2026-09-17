@@ -79,6 +79,18 @@ def _summary_lines(changes: list[StagedChange], empty: str = "(none)") -> str:
     return lines if lines else empty
 
 
+def _truncate_diff(body: str, budget: int) -> tuple[str, int]:
+    """Cut *body* to *budget* chars; return ``(body, removed_chars)``.
+
+    ``removed_chars == 0`` means the body fit and was returned untouched.
+    A ``…[truncated N chars]`` marker replaces the elided tail.
+    """
+    if budget < 0 or len(body) <= budget:
+        return body, 0
+    removed = len(body) - budget
+    return body[:budget] + f"\n…[truncated {removed} chars]", removed
+
+
 def format_diff(changes: list[StagedChange], diff_text: str,
                 profile: RepoProfile) -> str:
     """Deterministic, truncated rendering of the staged diff for the prompt.
@@ -94,10 +106,7 @@ def format_diff(changes: list[StagedChange], diff_text: str,
     rendering is derived only from *changes* and *diff_text*.
     """
     summary = _summary_lines(changes)
-    body = diff_text
-    if len(body) > MAX_DIFF_CHARS:
-        removed = len(body) - MAX_DIFF_CHARS
-        body = body[:MAX_DIFF_CHARS] + f"\n…[truncated {removed} chars]"
+    body, _removed = _truncate_diff(diff_text, MAX_DIFF_CHARS)
     return f"# Staged Files\n{summary}\n\n# Staged Diff\n{body}"
 
 
@@ -122,13 +131,18 @@ class PromptBuilder:
 
     def build(self, profile: RepoProfile, changes: list[StagedChange],
               diff_text: str, context_text: str, rules: str = "",
-              tech_template: str | None = None) -> PromptPayload:
+              tech_template: str | None = None,
+              max_diff_chars: int = MAX_DIFF_CHARS) -> PromptPayload:
         """Build a :class:`PromptPayload` for one review.
 
         *tech_template* overrides the detected-technology layer (defaults to
         ``technology/generic.md``); its ``{{technology_summary}}`` placeholder is
         substituted with the profile table. *rules* renders the
-        "# Repository Review Rules" section only when non-blank.
+        "# Repository Review Rules" section only when non-blank. *max_diff_chars*
+        is the diff budget (``cfg.review.max_diff_kb * 1024`` from the pipeline);
+        the diff is cut here so no caller can bypass the budget, and an explicit
+        partial-review notice is appended when a cut happens — a silently
+        truncated diff would let unreviewed files be reported as reviewed.
         """
         system = self._load("system.md")
         review = self._load("review.md")
@@ -143,10 +157,19 @@ class PromptBuilder:
 
         files = _summary_lines(changes, empty="")
 
+        diff_body, removed = _truncate_diff(diff_text, max_diff_chars)
+        if removed:
+            diff_body += (
+                f"\n\n⚠ REVIEW PARTIAL: the staged diff exceeded the "
+                f"{max_diff_chars}-char budget ({removed} chars elided). "
+                f"Files beyond the cut were NOT reviewed — do not report a "
+                f"clean result for them."
+            )
+
         user_parts = [
             review, tech_layer,
             "# Staged Files", files,
-            "# Staged Diff", diff_text,
+            "# Staged Diff", diff_body,
             "# Relevant Context", context_text or "(none supplied)",
         ]
         if rules and rules.strip():
