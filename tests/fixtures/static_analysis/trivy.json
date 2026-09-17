@@ -1,0 +1,26 @@
+{
+  "Results": [
+    {
+      "Target": "Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "Misconfigurations": [
+        {
+          "ID": "DS002",
+          "AVDID": "AVD-DS-0002",
+          "Title": "Image user should not be 'root'",
+          "Description": "Running containers with 'root' user can lead to a container escape.",
+          "Severity": "HIGH",
+          "CauseMetadata": {"StartLine": 10, "EndLine": 10}
+        },
+        {
+          "ID": "DS026",
+          "Title": "No HEALTHCHECK defined",
+          "Description": "Add HEALTHCHECK to the image.",
+          "Severity": "LOW",
+          "CauseMetadata": {"StartLine": 1}
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "issues": [
+    {
+      "rule": {"name": "aws_instance_invalid_type", "severity": "error"},
+      "message": "instance type is invalid",
+      "range": {"filename": "main.tf", "start": {"line": 8, "column": 3}},
+      "severity": "error"
+    },
+    {
+      "rule": {"name": "terraform_naming_convention", "severity": "warning"},
+      "message": "resource name does not match the expected pattern",
+      "range": {"filename": "main.tf", "start": {"line": 2, "column": 1}},
+      "severity": "warning"
+    }
+  ]
+}

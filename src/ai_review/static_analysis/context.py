@@ -33,6 +33,9 @@ class AnalysisContext:
     def frameworks(self) -> set[str]:
         return {entry.name for entry in self.profile.frameworks}
 
+    def infrastructure(self) -> set[str]:
+        return {entry.name for entry in self.profile.infrastructure}
+
     def changed_paths(self, extensions: tuple[str, ...] = ()) -> list[str]:
         """Repo-relative staged paths that exist on disk, optionally by extension.
 

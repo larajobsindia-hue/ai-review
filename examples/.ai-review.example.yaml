@@ -73,3 +73,15 @@ static_analysis:
     eslint: { enabled: true }
     ruff: { enabled: true }
     staticcheck: { enabled: true }
+    larastan: { enabled: true }     # Laravel only
+    typescript: { enabled: true }
+    govet: { enabled: true }
+    sqlfluff: { enabled: true }
+    hadolint: { enabled: true }
+    trivy: { enabled: false }       # never downloads a DB in pre-commit
+    codeql: { enabled: false }      # CI-only
+    sonarqube: { enabled: false }   # CI-only, requires a server
+    checkov: { enabled: true }
+    tflint: { enabled: true }
+    kubeconform: { enabled: true }
+    kube_linter: { enabled: true }

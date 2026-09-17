@@ -1,0 +1,15 @@
+{
+  "resources": [
+    {
+      "filename": "k8s/deployment.yaml",
+      "kind": "Deployment",
+      "status": "invalid",
+      "msg": "error validating data: unknown field \"spec.template.spec.containrs\""
+    },
+    {
+      "filename": "k8s/service.yaml",
+      "kind": "Service",
+      "status": "ok"
+    }
+  ]
+}

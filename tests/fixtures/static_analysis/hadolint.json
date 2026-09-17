@@ -1,0 +1,8 @@
+[
+  {"file": "Dockerfile", "line": 3, "code": "DL3008", "level": "warning",
+   "message": "Pin versions in apt get install."},
+  {"file": "Dockerfile", "line": 10, "code": "DL3002", "level": "error",
+   "message": "Last USER should not be root."},
+  {"file": "Dockerfile", "line": 1, "code": "DL3006", "level": "info",
+   "message": "Always tag the version of an image explicitly."}
+]

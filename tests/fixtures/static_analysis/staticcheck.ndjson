@@ -1,0 +1,2 @@
+{"code":"SA1000","severity":"error","message":"invalid regular expression","location":{"file":"pkg/parse.go","line":31,"column":9},"end":{"file":"pkg/parse.go","line":31,"column":40}}
+{"code":"ST1005","severity":"warning","message":"error strings should not be capitalized","location":{"file":"pkg/parse.go","line":44,"column":6}}
